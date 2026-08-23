@@ -8,6 +8,5 @@ public class AgentOpsGuardianApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(AgentOpsGuardianApplication.class, args);
-		System.out.println("App started");
 	}
 }
