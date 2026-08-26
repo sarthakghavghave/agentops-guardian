@@ -1,6 +1,6 @@
 package com.agentops.guardian.service;
 
-import com.agentops.guardian.entity.Customer;
+import com.agentops.guardian.domain.customer.Customer;
 import com.agentops.guardian.repository.CustomerRepository;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +13,7 @@ public class CustomerService {
         this.customerRepository = customerRepository;
     }
 
-    public Customer getCustomer(Long customerId) {
+    public Customer getCustomer(String customerId) {
         return customerRepository.findById(customerId).orElse(null);
     }
 }

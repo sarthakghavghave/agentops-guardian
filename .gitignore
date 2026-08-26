@@ -35,3 +35,6 @@ build/
 # Environment/secrets
 .env
 *.env
+
+# Data
+/data/*.csv

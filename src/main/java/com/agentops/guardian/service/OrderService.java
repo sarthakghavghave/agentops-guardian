@@ -1,9 +1,12 @@
 package com.agentops.guardian.service;
 
-import com.agentops.guardian.entity.Order;
+import com.agentops.guardian.domain.order.Order;
+import com.agentops.guardian.domain.order.OrderStatus;
 import com.agentops.guardian.repository.OrderRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 public class OrderService {
@@ -14,23 +17,26 @@ public class OrderService {
         this.orderRepository = orderRepository;
     }
 
-    public Order getOrder(Long orderId) {
+    public Order getOrder(String orderId) {
         return orderRepository.findById(orderId).orElse(null);
     }
 
+    public List<Order> getCustomerOrders(String customerId) {
+        return orderRepository.findByCustomer_Id(customerId);
+    }
+
     @Transactional
-    public Order refundOrder(Long orderId) {
+    public Order returnOrder(String orderId) {
 
         Order order = orderRepository.findById(orderId).orElse(null);
 
         if (order == null) return null;
 
-        if (!"PAID".equalsIgnoreCase(order.getStatus())) {
-            throw new IllegalStateException("Only PAID orders can be refunded.");
+        if (order.getOrderStatus() != OrderStatus.COMPLETED) {
+            throw new IllegalStateException("Only completed orders can be returned.");
         }
 
-        order.setStatus("REFUNDED");
-
+        order.setOrderStatus(OrderStatus.RETURNED);
         return orderRepository.save(order);
     }
 }
