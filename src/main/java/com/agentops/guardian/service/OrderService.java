@@ -29,7 +29,6 @@ public class OrderService {
     public Order returnOrder(String orderId) {
 
         Order order = orderRepository.findById(orderId).orElse(null);
-
         if (order == null) return null;
 
         if (order.getOrderStatus() != OrderStatus.COMPLETED) {
