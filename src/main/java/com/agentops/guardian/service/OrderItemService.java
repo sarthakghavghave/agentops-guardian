@@ -16,6 +16,6 @@ public class OrderItemService {
     }
 
     public List<OrderItem> getOrderItems(String orderId) {
-        return orderItemRepository.findByOrder_Id(orderId);
+        return orderItemRepository.findByOrderIdWithProduct(orderId);
     }
 }
