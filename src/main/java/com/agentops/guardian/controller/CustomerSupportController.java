@@ -4,12 +4,12 @@ import com.agentops.guardian.agent.CustomerSupportAgent;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/agent")
-public class AgentController {
+@RequestMapping("/api/support-agent")
+public class CustomerSupportController {
 
     private final CustomerSupportAgent agent;
 
-    public AgentController(CustomerSupportAgent agent) {
+    public CustomerSupportController(CustomerSupportAgent agent) {
         this.agent = agent;
     }
 

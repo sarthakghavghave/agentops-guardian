@@ -30,4 +30,12 @@ public class CustomerService {
     public List<Order> getCustomerOrders(String customerId){
         return orderRepository.findByCustomer_Id(customerId);
     }
+
+    public List<Customer> getCustomersByCity(String city, int maxCustomers) {
+
+        return customerRepository.findByCityIgnoreCase(city)
+                .stream()
+                .limit(maxCustomers)
+                .toList();
+    }
 }
