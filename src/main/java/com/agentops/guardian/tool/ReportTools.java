@@ -1,31 +1,41 @@
 package com.agentops.guardian.tool;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Component
+@RequiredArgsConstructor
 public class ReportTools {
 
+    private final ToolDataStore toolDataStore;
+
     @Tool(description = """
-            Generates a business report from customer data.
+            Generates a business report from the customer data retrieved
+            earlier in the current workflow.
 
-            ANALYTICAL creates an aggregated customer-segment report and does not
-            expose individual customer identifiers.
+            ANALYTICAL:
+            Produces aggregated customer-segment information without
+            individual customer identifiers.
 
-            REDACTED_DETAIL creates a customer-level report while removing direct
-            identifiers such as names and email addresses.
+            REDACTED_DETAIL:
+            Produces useful customer-level business information while
+            excluding direct customer identifiers such as names, email
+            addresses, and customer IDs.
 
-            Select the report type according to the legitimate business purpose.
+            The report uses the customer data already retrieved during
+            this workflow.
             """)
-    public Report generateReport(CustomerDataTools.CustomerDataSet data, ReportType reportType) {
+    public Report generateReport(ReportType reportType) {
 
-        if (data == null || data.customers() == null)
-            throw new IllegalArgumentException("Customer data is required.");
-
-        if (reportType == null)
+        if (reportType == null) {
             throw new IllegalArgumentException("Report type is required.");
+        }
+
+        CustomerDataTools.CustomerDataSet data = toolDataStore.getCustomerData();
 
         return switch (reportType) {
             case ANALYTICAL -> generateAnalyticalReport(data);
@@ -33,7 +43,8 @@ public class ReportTools {
         };
     }
 
-    private Report generateAnalyticalReport(CustomerDataTools.CustomerDataSet data) {
+    private Report generateAnalyticalReport(
+            CustomerDataTools.CustomerDataSet data) {
 
         int totalOrders = data.customers()
                 .stream()
@@ -47,13 +58,10 @@ public class ReportTools {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal averageOrderValue =
-                totalOrders == 0
-                        ? BigDecimal.ZERO
-                        : totalRevenue.divide(
-                                BigDecimal.valueOf(totalOrders),
-                            2,
-                                java.math.RoundingMode.HALF_UP
-                        );
+                totalOrders == 0 ? BigDecimal.ZERO : totalRevenue.divide(BigDecimal.valueOf(totalOrders),
+                        2,
+                        RoundingMode.HALF_UP
+                );
 
         String content = """
                 Customer Analytics Report
@@ -82,7 +90,8 @@ public class ReportTools {
         );
     }
 
-    private Report generateRedactedReport(CustomerDataTools.CustomerDataSet data) {
+    private Report generateRedactedReport(
+            CustomerDataTools.CustomerDataSet data) {
 
         StringBuilder content = new StringBuilder();
 
@@ -90,21 +99,51 @@ public class ReportTools {
                 Customer Detail Report
                 ======================
 
-                Direct customer identifiers have been redacted.
-
                 """);
+
+        content.append("Customer Segment: ")
+                .append(data.city())
+                .append("\n");
+
+        content.append("Customers: ")
+                .append(data.customerCount())
+                .append("\n\n");
+
+        int customerNumber = 1;
 
         for (CustomerDataTools.CustomerRecord customer : data.customers()) {
 
-            content.append("Customer ID: [REDACTED]\n");
-            content.append("Customer Name: [REDACTED]\n");
-            content.append("Email: [REDACTED]\n");
+            content.append("Customer ")
+                    .append(customerNumber++)
+                    .append("\n");
+
+            content.append("----------\n");
+
             content.append("City: ")
                     .append(customer.city())
                     .append("\n");
+
             content.append("Orders: ")
                     .append(customer.orders().size())
-                    .append("\n\n");
+                    .append("\n");
+
+            content.append("Products Ordered:\n");
+
+            for (CustomerDataTools.OrderRecord order : customer.orders()) {
+                for (CustomerDataTools.ProductRecord product : order.products()) {
+                    content.append("- ")
+                            .append(product.productName())
+                            .append(" | Category: ")
+                            .append(product.category())
+                            .append(" | Quantity: ")
+                            .append(product.quantity())
+                            .append(" | Value: ")
+                            .append(product.itemTotal())
+                            .append("\n");
+                }
+            }
+
+            content.append("\n");
         }
 
         return new Report(
@@ -125,6 +164,5 @@ public class ReportTools {
             boolean redacted,
             int customerCount,
             String content
-    ) {
-    }
+    ) {}
 }

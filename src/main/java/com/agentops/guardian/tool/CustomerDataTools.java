@@ -2,44 +2,54 @@ package com.agentops.guardian.tool;
 
 import com.agentops.guardian.domain.customer.Customer;
 import com.agentops.guardian.domain.order.Order;
+import com.agentops.guardian.domain.order.OrderItem;
+import com.agentops.guardian.domain.product.Product;
 import com.agentops.guardian.service.CustomerService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class CustomerDataTools {
 
     private static final int MAX_CUSTOMERS_PER_REQUEST = 100;
-    private final CustomerService customerService;
 
-    public CustomerDataTools(CustomerService customerService) {
-        this.customerService = customerService;
-    }
+    private final CustomerService customerService;
+    private final ToolDataStore toolDataStore;
 
     @Tool(description = """
             Retrieves the underlying customer and order records for a specified
-            customer segment. Use this when a reporting task requires customer-level
-            data.
+            customer segment.
 
-            The returned records may contain sensitive customer information such
-            as customer ID, name and email. Retrieve only the segment necessary
-            for the requested business task.
+            Use this when the business task requires customer-level information.
 
-            Do not use this tool when an aggregated report can satisfy the request.
+            The returned data may contain sensitive customer information such
+            as customer ID, name, and email.
+
+            Retrieve only the customer segment necessary for the requested task.
             """)
-    public CustomerDataSet getCustomerData(String city, int maxCustomers) {
+    public CustomerDataSet getCustomerData(
+            String city,
+            int maxCustomers) {
 
         if (city == null || city.isBlank()) {
             throw new IllegalArgumentException("City is required.");
         }
 
         if (maxCustomers <= 0) {
-            throw new IllegalArgumentException("maxCustomers must be greater than zero.");
+            throw new IllegalArgumentException(
+                    "maxCustomers must be greater than zero.");
         }
 
-        int limit = Math.min(maxCustomers, MAX_CUSTOMERS_PER_REQUEST);
+        int limit = Math.min(
+                maxCustomers,
+                MAX_CUSTOMERS_PER_REQUEST
+        );
 
         List<CustomerRecord> records =
                 customerService
@@ -48,7 +58,16 @@ public class CustomerDataTools {
                         .map(this::toCustomerRecord)
                         .toList();
 
-        return new CustomerDataSet(city, records.size(), records);
+        CustomerDataSet data =
+                new CustomerDataSet(
+                        city,
+                        records.size(),
+                        records
+                );
+
+        toolDataStore.storeCustomerData(data);
+
+        return data;
     }
 
     private CustomerRecord toCustomerRecord(Customer customer) {
@@ -70,11 +89,31 @@ public class CustomerDataTools {
     }
 
     private OrderRecord toOrderRecord(Order order) {
+
+        List<ProductRecord> products =
+                order.getItems()
+                        .stream()
+                        .map(this::toProductRecord)
+                        .toList();
+
         return new OrderRecord(
                 order.getId(),
                 order.getOrderDate(),
                 order.getOrderStatus().name(),
-                order.getTotalAmount()
+                order.getTotalAmount(),
+                products
+        );
+    }
+
+    private ProductRecord toProductRecord(OrderItem item) {
+
+        Product product = item.getProduct();
+
+        return new ProductRecord(
+                product.getName(),
+                product.getCategory(),
+                item.getQuantity(),
+                item.getItemTotal()
         );
     }
 
@@ -94,8 +133,16 @@ public class CustomerDataTools {
 
     public record OrderRecord(
             String orderId,
-            java.time.LocalDateTime orderDate,
+            LocalDateTime orderDate,
             String status,
-            java.math.BigDecimal totalAmount
+            BigDecimal totalAmount,
+            List<ProductRecord> products
+    ) {}
+
+    public record ProductRecord(
+            String productName,
+            String category,
+            Integer quantity,
+            BigDecimal itemTotal
     ) {}
 }

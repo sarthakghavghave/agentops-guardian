@@ -2,6 +2,7 @@ package com.agentops.guardian.agent;
 
 import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.governance.WorkflowContextHolder;
 import com.agentops.guardian.tool.ReportTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
@@ -14,12 +15,16 @@ import java.nio.charset.StandardCharsets;
 public class CustomerReportAgent {
 
     private final ChatClient chatClient;
+    private final WorkflowContextHolder workflowContextHolder;
 
     public CustomerReportAgent(
             ChatClient.Builder chatClientBuilder,
             CustomerDataTools customerDataTools,
             ReportTools reportTools,
-            CommunicationTools communicationTools) throws IOException {
+            CommunicationTools communicationTools,
+            WorkflowContextHolder workflowContextHolder) throws IOException {
+
+        this.workflowContextHolder = workflowContextHolder;
 
         String systemPrompt = new String(
                 new ClassPathResource(
@@ -39,12 +44,17 @@ public class CustomerReportAgent {
                 .build();
     }
 
-    public String generateReport(String request) {
+    public String generateReport(String message) {
 
-        return chatClient
-                .prompt()
-                .user(request)
-                .call()
-                .content();
+        workflowContextHolder.startWorkflow("CustomerReportAgent");
+
+        try {
+            return chatClient
+                    .prompt()
+                    .user(message)
+                    .call()
+                    .content();
+        }
+        finally {workflowContextHolder.clear();}
     }
 }

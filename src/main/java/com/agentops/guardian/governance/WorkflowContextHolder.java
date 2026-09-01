@@ -1,0 +1,25 @@
+package com.agentops.guardian.governance;
+
+import com.agentops.guardian.governance.model.WorkflowContext;
+import org.springframework.stereotype.Component;
+
+@Component
+public class WorkflowContextHolder {
+
+    private final ThreadLocal<WorkflowContext> context = new ThreadLocal<>();
+
+    public WorkflowContext startWorkflow(String agentName) {
+        WorkflowContext workflowContext = new WorkflowContext(agentName);
+        context.set(workflowContext);
+
+        return workflowContext;
+    }
+
+    public WorkflowContext getCurrentWorkflow() {
+        return context.get();
+    }
+
+    public void clear() {
+        context.remove();
+    }
+}
