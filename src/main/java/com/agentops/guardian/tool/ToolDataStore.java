@@ -1,6 +1,6 @@
 package com.agentops.guardian.tool;
 
-import com.agentops.guardian.governance.WorkflowContextHolder;
+import com.agentops.guardian.governance.WorkflowContextManager;
 import com.agentops.guardian.governance.model.WorkflowContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 public class ToolDataStore {
 
     private static final String CUSTOMER_DATA_KEY = ToolDataStore.class.getName() + ".customerData";
-    private final WorkflowContextHolder workflowContextHolder;
+    private final WorkflowContextManager workflowContextManager;
 
     public void storeCustomerData(CustomerDataTools.CustomerDataSet data) {
         currentWorkflow().putData(CUSTOMER_DATA_KEY, data);
@@ -32,7 +32,7 @@ public class ToolDataStore {
     }
 
     private WorkflowContext currentWorkflow() {
-        WorkflowContext context = workflowContextHolder.getCurrentWorkflow();
+        WorkflowContext context = workflowContextManager.current();
 
         if (context == null) {
             throw new IllegalStateException("No active workflow.");

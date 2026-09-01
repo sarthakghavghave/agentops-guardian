@@ -16,10 +16,10 @@ import java.util.List;
 public class GuardianToolCallingManager implements ToolCallingManager {
 
     private final ToolCallingManager delegate;
-    private final WorkflowContextHolder workflowContextHolder;
+    private final WorkflowContextManager workflowContextManager;
 
-    public GuardianToolCallingManager(WorkflowContextHolder workflowContextHolder) {
-        this.workflowContextHolder = workflowContextHolder;
+    public GuardianToolCallingManager(WorkflowContextManager workflowContextManager) {
+        this.workflowContextManager = workflowContextManager;
         this.delegate = ToolCallingManager.builder().build();
     }
 
@@ -45,7 +45,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         Instant.now()
                 );
 
-                WorkflowContext workflowContext = workflowContextHolder.getCurrentWorkflow();
+                WorkflowContext workflowContext = workflowContextManager.current();
 
                 if (workflowContext != null) {
                     workflowContext.addToolCall(event);
@@ -66,7 +66,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
     private void logToolCall(ToolCallEvent event) {
 
-        WorkflowContext workflowContext = workflowContextHolder.getCurrentWorkflow();
+        WorkflowContext workflowContext = workflowContextManager.current();
 
         System.out.println(
                 "[GUARDIAN] Tool call intercepted"

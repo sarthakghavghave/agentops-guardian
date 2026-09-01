@@ -1,8 +1,9 @@
 package com.agentops.guardian.agent;
 
+import com.agentops.guardian.governance.model.WorkflowContext;
 import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.CustomerDataTools;
-import com.agentops.guardian.governance.WorkflowContextHolder;
+import com.agentops.guardian.governance.WorkflowContextManager;
 import com.agentops.guardian.tool.ReportTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
@@ -15,16 +16,16 @@ import java.nio.charset.StandardCharsets;
 public class CustomerReportAgent {
 
     private final ChatClient chatClient;
-    private final WorkflowContextHolder workflowContextHolder;
+    private final WorkflowContextManager workflowContextManager;
 
     public CustomerReportAgent(
             ChatClient.Builder chatClientBuilder,
             CustomerDataTools customerDataTools,
             ReportTools reportTools,
             CommunicationTools communicationTools,
-            WorkflowContextHolder workflowContextHolder) throws IOException {
+            WorkflowContextManager workflowContextManager) throws IOException {
 
-        this.workflowContextHolder = workflowContextHolder;
+        this.workflowContextManager = workflowContextManager;
 
         String systemPrompt = new String(
                 new ClassPathResource(
@@ -46,15 +47,43 @@ public class CustomerReportAgent {
 
     public String generateReport(String message) {
 
-        workflowContextHolder.startWorkflow("CustomerReportAgent");
+        workflowContextManager.start("CustomerReportAgent");
 
         try {
-            return chatClient
+            String response = chatClient
                     .prompt()
                     .user(message)
                     .call()
                     .content();
+
+            WorkflowContext context = workflowContextManager.complete();
+
+            // log
+            System.out.println("""
+        
+                ================ WORKFLOW COMPLETED ================
+                Workflow ID : %s
+                Agent       : %s
+                Status      : %s
+                Tool Calls  : %d
+                Started     : %s
+                Completed   : %s
+                =====================================================
+                """.formatted(
+                            context.getWorkflowId(),
+                            context.getAgentName(),
+                            context.getStatus(),
+                            context.getToolCallCount(),
+                            context.getStartedAt(),
+                            context.getCompletedAt()
+            ));
+
+            return response;
         }
-        finally {workflowContextHolder.clear();}
+        catch (RuntimeException ex) {
+            workflowContextManager.fail();
+            throw ex;
+        }
+        finally {workflowContextManager.clear();}
     }
 }
