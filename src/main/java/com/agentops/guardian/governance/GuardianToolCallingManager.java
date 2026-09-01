@@ -2,6 +2,7 @@ package com.agentops.guardian.governance;
 
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.WorkflowContext;
+import com.agentops.guardian.governance.model.GovernanceDecision;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
@@ -16,10 +17,14 @@ import java.util.List;
 public class GuardianToolCallingManager implements ToolCallingManager {
 
     private final ToolCallingManager delegate;
+    private final GovernancePolicyEngine policyEngine;
     private final WorkflowContextManager workflowContextManager;
 
-    public GuardianToolCallingManager(WorkflowContextManager workflowContextManager) {
+    public GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine) {
         this.workflowContextManager = workflowContextManager;
+        this.policyEngine = policyEngine;
         this.delegate = ToolCallingManager.builder().build();
     }
 
@@ -30,13 +35,9 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 && chatResponse.getResult() != null
                 && chatResponse.getResult().getOutput() != null) {
 
-            var toolCalls = chatResponse
-                    .getResult()
-                    .getOutput()
-                    .getToolCalls();
+            var toolCalls = chatResponse.getResult().getOutput().getToolCalls();
 
             for (var toolCall : toolCalls) {
-
                 ToolCallEvent event = new ToolCallEvent(
                         toolCall.id(),
                         toolCall.name(),
@@ -46,12 +47,24 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 );
 
                 WorkflowContext workflowContext = workflowContextManager.current();
+                GovernanceDecision decision = policyEngine.evaluate(workflowContext, event);
 
-                if (workflowContext != null) {
-                    workflowContext.addToolCall(event);
+                if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
+                    System.out.println("[GUARDIAN] BLOCKED");
+                    System.out.println("  Workflow: " + workflowContext.getWorkflowId());
+                    System.out.println("  Agent: " + workflowContext.getAgentName());
+                    System.out.println("  Tool: " + event.toolName());
+                    System.out.println("  Reason: " + decision.reason());
+                    throw new GovernanceViolationException(decision.reason());
                 }
 
+                workflowContext.addToolCall(event);
                 logToolCall(event);
+
+                System.out.println("[GUARDIAN] Governance decision: ALLOW");
+                System.out.println("  Workflow: " + workflowContext.getWorkflowId());
+                System.out.println("  Tool: " + event.toolName());
+                System.out.println("  Reason: " + decision.reason());
             }
         }
 
