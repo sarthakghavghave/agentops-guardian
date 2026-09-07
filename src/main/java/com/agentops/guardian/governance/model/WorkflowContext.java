@@ -19,6 +19,8 @@ public class WorkflowContext {
     private WorkflowStatus status;
     private final List<ToolCallEvent> toolCalls = new ArrayList<>();
     private final Map<String, Object> data = new HashMap<>();
+    private DataClassification currentDataClassification;
+    private DataTransformation lastTransformation;
 
     public WorkflowContext(String agentName) {
         this.workflowId = UUID.randomUUID().toString();
@@ -60,6 +62,25 @@ public class WorkflowContext {
 
     public Object getData(String key) {
         return data.get(key);
+    }
+
+    public void markDataAcquired(DataClassification classification) {
+        ensureRunning();
+        currentDataClassification = classification;
+    }
+
+    public void recordTransformation(DataTransformation transformation) {
+        ensureRunning();
+        lastTransformation = transformation;
+        currentDataClassification = transformation.resultClassification();
+    }
+
+    public DataClassification getCurrentDataClassification() {
+        return currentDataClassification;
+    }
+
+    public DataTransformation getLastTransformation() {
+        return lastTransformation;
     }
 
     public void removeData(String key) {
