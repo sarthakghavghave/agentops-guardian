@@ -3,9 +3,11 @@ package com.agentops.guardian.governance.execution;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
-import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.context.WorkflowContext;
+import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
+
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
@@ -22,13 +24,16 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final ToolCallingManager delegate;
     private final GovernancePolicyEngine policyEngine;
     private final WorkflowContextManager workflowContextManager;
+    private final ToolCapabilityRegistry toolCapabilityRegistry;
 
     public GuardianToolCallingManager(
             WorkflowContextManager workflowContextManager,
-            GovernancePolicyEngine policyEngine) {
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.delegate = ToolCallingManager.builder().build();
+        this.toolCapabilityRegistry = toolCapabilityRegistry;
     }
 
     @Override

@@ -1,10 +1,12 @@
 package com.agentops.guardian.agent;
 
-import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.tool.ReportTools;
+
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -46,8 +48,11 @@ public class CustomerReportAgent {
     }
 
     public String generateReport(String message) {
-
-        workflowContextManager.start("CustomerReportAgent");
+        workflowContextManager.start(
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING,
+                message
+        );
 
         try {
             String response = chatClient
@@ -56,34 +61,19 @@ public class CustomerReportAgent {
                     .call()
                     .content();
 
-            WorkflowContext context = workflowContextManager.complete();
-
-            // log
-            System.out.println("""
-        
-                ================ WORKFLOW COMPLETED ================
-                Workflow ID : %s
-                Agent       : %s
-                Status      : %s
-                Tool Calls  : %d
-                Started     : %s
-                Completed   : %s
-                =====================================================
-                """.formatted(
-                            context.getWorkflowId(),
-                            context.getAgentName(),
-                            context.getStatus(),
-                            context.getToolCallCount(),
-                            context.getStartedAt(),
-                            context.getCompletedAt()
-            ));
-
+            workflowContextManager.complete();
             return response;
-        }
-        catch (RuntimeException ex) {
+
+        } catch (GovernanceViolationException ex) {
+            workflowContextManager.block();
+            throw ex;
+
+        } catch (RuntimeException ex) {
             workflowContextManager.fail();
             throw ex;
+
+        } finally {
+            workflowContextManager.clear();
         }
-        finally {workflowContextManager.clear();}
     }
 }
