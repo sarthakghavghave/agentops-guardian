@@ -1,7 +1,8 @@
 package com.agentops.guardian.governance;
 
+import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.model.ToolCallEvent;
-import com.agentops.guardian.governance.model.WorkflowContext;
+import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;

@@ -1,6 +1,6 @@
 package com.agentops.guardian.governance;
 
-import com.agentops.guardian.governance.model.WorkflowContext;
+import com.agentops.guardian.governance.context.WorkflowContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
