@@ -1,4 +1,4 @@
-package com.agentops.guardian.governance.workflow;
+package com.agentops.guardian.governance.context;
 
 public enum WorkflowStatus {
     RUNNING,

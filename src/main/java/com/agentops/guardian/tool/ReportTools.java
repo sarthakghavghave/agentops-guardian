@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
-import com.agentops.guardian.governance.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.DataTransformation;
 

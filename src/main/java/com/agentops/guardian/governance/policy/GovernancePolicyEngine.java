@@ -1,9 +1,8 @@
-package com.agentops.guardian.governance;
+package com.agentops.guardian.governance.policy;
 
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.context.WorkflowContext;
-import com.agentops.guardian.governance.policy.GovernancePolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

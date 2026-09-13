@@ -1,4 +1,4 @@
-package com.agentops.guardian.governance;
+package com.agentops.guardian.governance.exception;
 
 public class GovernanceViolationException extends RuntimeException {
     public GovernanceViolationException(String message) {

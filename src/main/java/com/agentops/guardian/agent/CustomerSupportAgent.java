@@ -1,7 +1,7 @@
 package com.agentops.guardian.agent;
 
-import com.agentops.guardian.governance.WorkflowContextManager;
-import com.agentops.guardian.governance.model.WorkflowContext;
+import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.tool.CustomerTools;
 import com.agentops.guardian.tool.OrderTools;
 import com.agentops.guardian.tool.ProductTools;

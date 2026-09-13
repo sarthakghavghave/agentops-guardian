@@ -4,7 +4,7 @@ import com.agentops.guardian.domain.customer.Customer;
 import com.agentops.guardian.domain.order.Order;
 import com.agentops.guardian.domain.order.OrderItem;
 import com.agentops.guardian.domain.product.Product;
-import com.agentops.guardian.governance.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.service.CustomerService;
 import lombok.RequiredArgsConstructor;

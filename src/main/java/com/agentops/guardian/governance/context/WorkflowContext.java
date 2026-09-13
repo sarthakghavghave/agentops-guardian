@@ -1,5 +1,8 @@
-package com.agentops.guardian.governance.model;
+package com.agentops.guardian.governance.context;
 
+import com.agentops.guardian.governance.model.DataClassification;
+import com.agentops.guardian.governance.model.DataTransformation;
+import com.agentops.guardian.governance.model.ToolCallEvent;
 import lombok.Getter;
 
 import java.time.Instant;
