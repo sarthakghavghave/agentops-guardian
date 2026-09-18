@@ -6,7 +6,9 @@ import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
+import com.agentops.guardian.governance.workflow.WorkflowCapability;
 
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -56,6 +58,20 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
                 WorkflowContext workflowContext = workflowContextManager.current();
                 GovernanceDecision decision = policyEngine.evaluate(workflowContext, event);
+
+                WorkflowCapability capability = toolCapabilityRegistry.getCapability(toolCall.name());
+
+                if (capability != null) {
+                    WorkflowAction action = WorkflowAction.create(
+                            toolCall.id(),
+                            workflowContext.nextActionSequence(),
+                            toolCall.name(),
+                            capability,
+                            toolCall.arguments()
+                    );
+
+                    workflowContext.addAction(action);
+                }
 
                 if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
                     System.out.println("[GUARDIAN] BLOCKED");

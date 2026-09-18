@@ -4,7 +4,8 @@ import java.util.Set;
 
 public record WorkflowDefinition(
         WorkflowType type,
-        Set<WorkflowCapability> capabilities
+        Set<WorkflowCapability> capabilities,
+        WorkflowGraph graph
 ) {
 
     public WorkflowDefinition {
@@ -16,7 +17,15 @@ public record WorkflowDefinition(
             throw new IllegalArgumentException("Workflow capabilities are required.");
         }
 
+        if (graph == null) {
+            throw new IllegalArgumentException("Workflow graph is required.");
+        }
+
         capabilities = Set.copyOf(capabilities);
+    }
+
+    public WorkflowGraph getGraph() {
+        return graph;
     }
 
     public boolean allows(WorkflowCapability capability) {

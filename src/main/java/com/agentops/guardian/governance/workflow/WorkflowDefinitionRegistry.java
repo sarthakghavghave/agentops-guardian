@@ -20,9 +20,26 @@ public class WorkflowDefinitionRegistry {
                                 WorkflowCapability.READ_CUSTOMER_DATA,
                                 WorkflowCapability.GENERATE_REPORT,
                                 WorkflowCapability.SEND_EMAIL
-                        )
+                        ),
+                        WorkflowGraph.customerReportingGraph()
                 )
         );
+
+        WorkflowGraph customerSupportGraph = WorkflowGraph.builder()
+                .addNode(WorkflowGraph.START_NODE_ID)
+                .addNode("CUSTOMER_DATA", WorkflowCapability.READ_CUSTOMER_DATA)
+                .addNode("ORDER", WorkflowCapability.READ_ORDER)
+                .addNode("PRODUCT", WorkflowCapability.READ_PRODUCT)
+                .addNode("RETURN_ORDER", WorkflowCapability.RETURN_ORDER)
+                .addTransition(WorkflowGraph.START_NODE_ID, "CUSTOMER_DATA")
+                .addTransition(WorkflowGraph.START_NODE_ID, "ORDER")
+                .addTransition(WorkflowGraph.START_NODE_ID, "PRODUCT")
+                .addTransition("CUSTOMER_DATA", "ORDER")
+                .addTransition("CUSTOMER_DATA", "PRODUCT")
+                .addTransition("ORDER", "RETURN_ORDER")
+                .addTransition("ORDER", "PRODUCT")
+                .addTransition("PRODUCT", "ORDER")
+                .build();
 
         definitions.put(
                 WorkflowType.CUSTOMER_SUPPORT,
@@ -33,7 +50,8 @@ public class WorkflowDefinitionRegistry {
                                 WorkflowCapability.READ_ORDER,
                                 WorkflowCapability.READ_PRODUCT,
                                 WorkflowCapability.RETURN_ORDER
-                        )
+                        ),
+                        customerSupportGraph
                 )
         );
     }
