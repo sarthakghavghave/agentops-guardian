@@ -360,6 +360,60 @@ class WorkflowContextTest {
         assertEquals(WorkflowState.DELIVERY_REQUESTED, ctx.getCurrentState());
     }
 
+        @Test
+        void shouldValidateCapabilityTransitionWithoutMutatingWorkflow() {
+                WorkflowContext ctx = reportingContext();
+
+                ctx.validateCapabilityTransition(WorkflowCapability.READ_CUSTOMER_DATA);
+
+                assertEquals("START", ctx.getCurrentNodeId());
+                assertEquals(WorkflowState.STARTED, ctx.getCurrentState());
+        }
+
+        @Test
+        void shouldRejectInvalidCapabilityTransition() {
+                WorkflowContext ctx = reportingContext();
+
+                IllegalStateException exception = assertThrows(
+                                IllegalStateException.class,
+                                () -> ctx.validateCapabilityTransition(WorkflowCapability.SEND_EMAIL)
+                );
+
+                assertTrue(exception.getMessage().contains("Invalid workflow transition from START to DELIVERY"));
+                assertEquals("START", ctx.getCurrentNodeId());
+        }
+
+        @Test
+        void shouldRejectUnsupportedCapabilityTransition() {
+                WorkflowDefinition definition = new WorkflowDefinition(
+                                WorkflowType.CUSTOMER_REPORTING,
+                                Set.of(WorkflowCapability.READ_CUSTOMER_DATA),
+                                WorkflowGraph.customerReportingGraph()
+                );
+                WorkflowContext ctx = new WorkflowContext(
+                                "CustomerReportAgent",
+                                WorkflowType.CUSTOMER_REPORTING,
+                                "Read customer data",
+                                definition
+                );
+
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> ctx.validateCapabilityTransition(WorkflowCapability.RETURN_ORDER)
+                );
+                assertEquals("START", ctx.getCurrentNodeId());
+        }
+
+        @Test
+        void shouldAdvanceOnlyAfterCapabilityValidationSucceeds() {
+                WorkflowContext ctx = reportingContext();
+
+                ctx.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
+
+                assertEquals("CUSTOMER_DATA", ctx.getCurrentNodeId());
+                assertEquals(WorkflowState.DATA_ACQUIRED, ctx.getCurrentState());
+        }
+
     @Test
     void shouldRejectAdvanceAfterCapabilitySkippingSteps() {
         WorkflowGraph graph = WorkflowGraph.customerReportingGraph();
@@ -444,6 +498,25 @@ class WorkflowContextTest {
         assertThrows(
                 IllegalStateException.class,
                 () -> ctx.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA)
+        );
+    }
+
+    private WorkflowContext reportingContext() {
+        WorkflowDefinition definition = new WorkflowDefinition(
+                WorkflowType.CUSTOMER_REPORTING,
+                Set.of(
+                        WorkflowCapability.READ_CUSTOMER_DATA,
+                        WorkflowCapability.GENERATE_REPORT,
+                        WorkflowCapability.SEND_EMAIL
+                ),
+                WorkflowGraph.customerReportingGraph()
+        );
+
+        return new WorkflowContext(
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING,
+                "Generate a customer report",
+                definition
         );
     }
 }

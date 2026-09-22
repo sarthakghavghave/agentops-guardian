@@ -13,7 +13,7 @@ public record WorkflowNode(String id, WorkflowCapability capability) {
             throw new IllegalArgumentException("Workflow node id is required.");
         }
 
-        if (capability == null && !START_NODE_ID.equalsIgnoreCase(id.trim())) {
+        if (capability == null && !START_NODE_ID.equals(id)) {
             throw new IllegalArgumentException("Workflow node capability is required for non-control nodes.");
         }
     }

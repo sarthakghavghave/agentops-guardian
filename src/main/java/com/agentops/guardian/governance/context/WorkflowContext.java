@@ -186,7 +186,7 @@ public class WorkflowContext {
         return workflowDefinition.graph().canTransition(currentNodeId, nodeId);
     }
 
-    public void advanceAfterCapability(WorkflowCapability capability) {
+    public void validateCapabilityTransition(WorkflowCapability capability) {
         ensureRunning();
 
         if (capability == null) {
@@ -197,26 +197,49 @@ public class WorkflowContext {
             throw new IllegalArgumentException("Capability is not permitted for this workflow: " + capability);
         }
 
-        String targetNodeId;
-        WorkflowState targetState;
+        String targetNodeId = resolveTargetNodeId(capability);
+        workflowDefinition.graph().getNode(targetNodeId);
 
+        if (!workflowDefinition.graph().canTransition(currentNodeId, targetNodeId)) {
+            throw new IllegalStateException(
+                    "Invalid workflow transition from " + currentNodeId + " to " + targetNodeId
+            );
+        }
+    }
+
+    public void advanceAfterCapability(WorkflowCapability capability) {
+        validateCapabilityTransition(capability);
+
+        String targetNodeId = resolveTargetNodeId(capability);
+        WorkflowState targetState = resolveTargetState(capability);
+
+        this.currentNodeId = targetNodeId;
+        this.currentState = targetState;
+    }
+
+    private String resolveTargetNodeId(WorkflowCapability capability) {
+        return workflowDefinition.graph().getNodes().stream()
+                .filter(node -> capability == node.capability())
+                .map(node -> node.id())
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No workflow node is defined for capability: " + capability
+                ));
+    }
+
+    private WorkflowState resolveTargetState(WorkflowCapability capability) {
         switch (capability) {
             case READ_CUSTOMER_DATA -> {
-                targetNodeId = "CUSTOMER_DATA";
-                targetState = WorkflowState.DATA_ACQUIRED;
+                return WorkflowState.DATA_ACQUIRED;
             }
             case GENERATE_REPORT -> {
-                targetNodeId = "REPORT";
-                targetState = WorkflowState.REPORT_GENERATED;
+                return WorkflowState.REPORT_GENERATED;
             }
             case SEND_EMAIL -> {
-                targetNodeId = "DELIVERY";
-                targetState = WorkflowState.DELIVERY_REQUESTED;
+                return WorkflowState.DELIVERY_REQUESTED;
             }
             default -> throw new IllegalArgumentException("Unsupported capability transition: " + capability);
         }
-
-        advanceTo(targetNodeId, targetState);
     }
 
     private void ensureRunning() {

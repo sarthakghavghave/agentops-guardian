@@ -10,15 +10,22 @@ import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class GuardianToolCallingManager implements ToolCallingManager {
@@ -28,14 +35,28 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final WorkflowContextManager workflowContextManager;
     private final ToolCapabilityRegistry toolCapabilityRegistry;
 
+    @Autowired
     public GuardianToolCallingManager(
             WorkflowContextManager workflowContextManager,
             GovernancePolicyEngine policyEngine,
             ToolCapabilityRegistry toolCapabilityRegistry) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                ToolCallingManager.builder().build()
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
-        this.delegate = ToolCallingManager.builder().build();
         this.toolCapabilityRegistry = toolCapabilityRegistry;
+        this.delegate = delegate;
     }
 
     @Override
@@ -47,7 +68,27 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
             var toolCalls = chatResponse.getResult().getOutput().getToolCalls();
 
-            for (var toolCall : toolCalls) {
+            WorkflowContext workflowContext = workflowContextManager.current();
+                List<ProposedToolCall> proposedToolCalls = toolCalls.stream()
+                    .map(toolCall -> new ProposedToolCall(
+                        toolCall,
+                        toolCapabilityRegistry.getCapability(toolCall.name())
+                    ))
+                    .toList();
+                long recognizedCapabilityCount = proposedToolCalls.stream()
+                    .filter(proposedToolCall -> proposedToolCall.capability() != null)
+                    .count();
+
+                if (recognizedCapabilityCount > 1) {
+                throw new GovernanceViolationException(
+                    "Batch execution containing multiple workflow capabilities is not supported."
+                );
+                }
+
+            List<ProposedCapability> proposedCapabilities = new ArrayList<>();
+
+            for (ProposedToolCall proposedToolCall : proposedToolCalls) {
+                var toolCall = proposedToolCall.toolCall();
                 ToolCallEvent event = new ToolCallEvent(
                         toolCall.id(),
                         toolCall.name(),
@@ -56,22 +97,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         Instant.now()
                 );
 
-                WorkflowContext workflowContext = workflowContextManager.current();
                 GovernanceDecision decision = policyEngine.evaluate(workflowContext, event);
-
-                WorkflowCapability capability = toolCapabilityRegistry.getCapability(toolCall.name());
-
-                if (capability != null) {
-                    WorkflowAction action = WorkflowAction.create(
-                            toolCall.id(),
-                            workflowContext.nextActionSequence(),
-                            toolCall.name(),
-                            capability,
-                            toolCall.arguments()
-                    );
-
-                    workflowContext.addAction(action);
-                }
 
                 if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
                     System.out.println("[GUARDIAN] BLOCKED");
@@ -82,6 +108,23 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     throw new GovernanceViolationException(decision.reason());
                 }
 
+                WorkflowCapability capability = proposedToolCall.capability();
+
+                if (capability != null) {
+                    workflowContext.validateCapabilityTransition(capability);
+
+                    WorkflowAction action = WorkflowAction.create(
+                            toolCall.id(),
+                            workflowContext.nextActionSequence(),
+                            toolCall.name(),
+                            capability,
+                            toolCall.arguments()
+                    );
+
+                    workflowContext.addAction(action);
+                    proposedCapabilities.add(new ProposedCapability(toolCall.id(), capability));
+                }
+
                 workflowContext.addToolCall(event);
                 logToolCall(event);
 
@@ -90,6 +133,17 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 System.out.println("  Tool: " + event.toolName());
                 System.out.println("  Reason: " + decision.reason());
             }
+
+            ToolExecutionResult result = delegate.executeToolCalls(prompt, chatResponse);
+            Set<String> executedToolCallIds = successfulToolCallIds(result);
+
+            for (ProposedCapability proposedCapability : proposedCapabilities) {
+                if (executedToolCallIds.contains(proposedCapability.toolCallId())) {
+                    workflowContext.advanceAfterCapability(proposedCapability.capability());
+                }
+            }
+
+            return result;
         }
 
         return delegate.executeToolCalls(prompt, chatResponse);
@@ -118,4 +172,28 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         + "\n  Timestamp: " + event.timestamp()
         );
     }
+
+    private Set<String> successfulToolCallIds(ToolExecutionResult result) {
+        Set<String> toolCallIds = new HashSet<>();
+
+        if (result == null || result.conversationHistory() == null) {
+            return toolCallIds;
+        }
+
+        result.conversationHistory().stream()
+                .filter(ToolResponseMessage.class::isInstance)
+                .map(ToolResponseMessage.class::cast)
+                .flatMap(message -> message.getResponses().stream())
+                .map(ToolResponseMessage.ToolResponse::id)
+                .forEach(toolCallIds::add);
+
+        return toolCallIds;
+    }
+
+    private record ProposedToolCall(
+            AssistantMessage.ToolCall toolCall,
+            WorkflowCapability capability
+    ) {}
+
+    private record ProposedCapability(String toolCallId, WorkflowCapability capability) {}
 }

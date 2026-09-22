@@ -190,7 +190,14 @@ class WorkflowGraphTest {
         // START node may have null capability
         assertDoesNotThrow(() -> new WorkflowNode("START"));
         assertDoesNotThrow(() -> new WorkflowNode("START", null));
-        assertDoesNotThrow(() -> new WorkflowNode("start", null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new WorkflowNode("start", null)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new WorkflowNode(" START ", null)
+        );
 
         // Non-control nodes must require capability
         assertThrows(
