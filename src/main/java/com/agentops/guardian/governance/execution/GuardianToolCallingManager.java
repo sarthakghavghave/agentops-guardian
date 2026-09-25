@@ -1,5 +1,9 @@
 package com.agentops.guardian.governance.execution;
 
+import com.agentops.guardian.governance.audit.AuditEvent;
+import com.agentops.guardian.governance.audit.AuditService;
+import com.agentops.guardian.governance.audit.NoOpAuditService;
+import com.agentops.guardian.governance.audit.WorkflowNodeSnapshot;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
@@ -34,17 +38,20 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final GovernancePolicyEngine policyEngine;
     private final WorkflowContextManager workflowContextManager;
     private final ToolCapabilityRegistry toolCapabilityRegistry;
+    private final AuditService auditService;
 
     @Autowired
     public GuardianToolCallingManager(
             WorkflowContextManager workflowContextManager,
             GovernancePolicyEngine policyEngine,
-            ToolCapabilityRegistry toolCapabilityRegistry) {
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            AuditService auditService) {
         this(
                 workflowContextManager,
                 policyEngine,
                 toolCapabilityRegistry,
-                ToolCallingManager.builder().build()
+                ToolCallingManager.builder().build(),
+                auditService
         );
     }
 
@@ -53,10 +60,26 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             GovernancePolicyEngine policyEngine,
             ToolCapabilityRegistry toolCapabilityRegistry,
             ToolCallingManager delegate) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                new NoOpAuditService()
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
         this.delegate = delegate;
+        this.auditService = auditService;
     }
 
     @Override
@@ -97,25 +120,67 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         Instant.now()
                 );
 
+                WorkflowCapability capability = proposedToolCall.capability();
+
+                auditService.record(AuditEvent.proposedAction(
+                        workflowContext.getWorkflowId(),
+                        workflowContext.getAgentName(),
+                        workflowContext.getWorkflowType(),
+                        event.toolCallId(),
+                        event.toolName(),
+                        capability,
+                        null
+                ));
+
+                workflowContext.addToolCall(event);
+
                 GovernanceDecision decision = policyEngine.evaluate(workflowContext, event);
 
+                auditService.record(AuditEvent.policyDecision(
+                        workflowContext.getWorkflowId(),
+                        workflowContext.getAgentName(),
+                        workflowContext.getWorkflowType(),
+                        event.toolCallId(),
+                        event.toolName(),
+                        capability,
+                        decision.decision(),
+                        decision.reason()
+                ));
+
                 if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
+                    auditService.record(AuditEvent.executionOutcome(
+                            workflowContext.getWorkflowId(),
+                            workflowContext.getAgentName(),
+                            workflowContext.getWorkflowType(),
+                            event.toolCallId(),
+                            event.toolName(),
+                            capability,
+                            AuditEvent.ExecutionStatus.BLOCKED,
+                            null,
+                            decision.reason(),
+                            null,
+                            null,
+                            null,
+                            null
+                    ));
+
                     System.out.println("[GUARDIAN] BLOCKED");
                     System.out.println("  Workflow: " + workflowContext.getWorkflowId());
                     System.out.println("  Agent: " + workflowContext.getAgentName());
                     System.out.println("  Tool: " + event.toolName());
                     System.out.println("  Reason: " + decision.reason());
+
                     throw new GovernanceViolationException(decision.reason());
                 }
-
-                WorkflowCapability capability = proposedToolCall.capability();
 
                 if (capability != null) {
                     workflowContext.validateCapabilityTransition(capability);
 
+                    Integer sequence = workflowContext.nextActionSequence();
+
                     WorkflowAction action = WorkflowAction.create(
                             toolCall.id(),
-                            workflowContext.nextActionSequence(),
+                            sequence,
                             toolCall.name(),
                             capability,
                             toolCall.arguments()
@@ -125,7 +190,6 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     proposedCapabilities.add(new ProposedCapability(toolCall.id(), capability));
                 }
 
-                workflowContext.addToolCall(event);
                 logToolCall(event);
 
                 System.out.println("[GUARDIAN] Governance decision: ALLOW");
@@ -134,16 +198,98 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 System.out.println("  Reason: " + decision.reason());
             }
 
-            ToolExecutionResult result = delegate.executeToolCalls(prompt, chatResponse);
-            Set<String> executedToolCallIds = successfulToolCallIds(result);
+            ToolExecutionResult result;
+            try {
+                result = delegate.executeToolCalls(prompt, chatResponse);
+                Set<String> executedToolCallIds = successfulToolCallIds(result);
 
-            for (ProposedCapability proposedCapability : proposedCapabilities) {
-                if (executedToolCallIds.contains(proposedCapability.toolCallId())) {
-                    workflowContext.advanceAfterCapability(proposedCapability.capability());
+                for (ProposedToolCall proposedToolCall : proposedToolCalls) {
+                    String toolCallId = proposedToolCall.toolCall().id();
+                    boolean executed = executedToolCallIds.contains(toolCallId);
+                    WorkflowCapability capability = proposedToolCall.capability();
+
+                    if (executed) {
+                        WorkflowNodeSnapshot beforeSuccess = capability == null ? null : new WorkflowNodeSnapshot(
+                                workflowContext.getCurrentNodeId(),
+                                workflowContext.getCurrentState(),
+                                capability
+                        );
+
+                        auditService.record(AuditEvent.executionOutcome(
+                                workflowContext.getWorkflowId(),
+                                workflowContext.getAgentName(),
+                                workflowContext.getWorkflowType(),
+                                toolCallId,
+                                proposedToolCall.toolCall().name(),
+                                capability,
+                                AuditEvent.ExecutionStatus.SUCCESS,
+                                null,
+                                null,
+                                beforeSuccess,
+                                null,
+                                beforeSuccess == null ? null : beforeSuccess.state(),
+                                null
+                        ));
+
+                        if (capability != null) {
+                            WorkflowNodeSnapshot nodeBefore = new WorkflowNodeSnapshot(
+                                    workflowContext.getCurrentNodeId(),
+                                    workflowContext.getCurrentState(),
+                                    capability
+                            );
+
+                            workflowContext.advanceAfterCapability(capability);
+
+                            WorkflowNodeSnapshot nodeAfter = new WorkflowNodeSnapshot(
+                                    workflowContext.getCurrentNodeId(),
+                                    workflowContext.getCurrentState(),
+                                    capability
+                            );
+
+                            auditService.record(AuditEvent.workflowTransition(
+                                    workflowContext.getWorkflowId(),
+                                    workflowContext.getAgentName(),
+                                    workflowContext.getWorkflowType(),
+                                    toolCallId,
+                                    proposedToolCall.toolCall().name(),
+                                    capability,
+                                    nodeBefore,
+                                    nodeAfter,
+                                    nodeBefore.state(),
+                                    nodeAfter.state()
+                            ));
+                        }
+                    }
                 }
-            }
 
-            return result;
+                return result;
+            } catch (RuntimeException ex) {
+                for (ProposedToolCall proposedToolCall : proposedToolCalls) {
+                    WorkflowCapability capability = proposedToolCall.capability();
+                    String toolId = proposedToolCall.toolCall().id();
+                    WorkflowNodeSnapshot failedBefore = capability == null ? null : new WorkflowNodeSnapshot(
+                            workflowContext.getCurrentNodeId(),
+                            workflowContext.getCurrentState(),
+                            capability
+                    );
+                    auditService.record(AuditEvent.executionOutcome(
+                            workflowContext.getWorkflowId(),
+                            workflowContext.getAgentName(),
+                            workflowContext.getWorkflowType(),
+                            toolId,
+                            proposedToolCall.toolCall().name(),
+                            capability,
+                            AuditEvent.ExecutionStatus.FAILED,
+                            ex.getClass().getName(),
+                            sanitizeError(ex),
+                            failedBefore,
+                            null,
+                            failedBefore == null ? null : failedBefore.state(),
+                            null
+                    ));
+                }
+                throw ex;
+            }
         }
 
         return delegate.executeToolCalls(prompt, chatResponse);
@@ -188,6 +334,14 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 .forEach(toolCallIds::add);
 
         return toolCallIds;
+    }
+
+    private String sanitizeError(RuntimeException ex) {
+        if (ex == null) {
+            return null;
+        }
+        String message = ex.getMessage();
+        return message == null || message.isBlank() ? ex.getClass().getSimpleName() : message;
     }
 
     private record ProposedToolCall(

@@ -1,5 +1,8 @@
 package com.agentops.guardian.governance.execution;
 
+import com.agentops.guardian.governance.audit.AuditEvent;
+import com.agentops.guardian.governance.audit.AuditEventType;
+import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
@@ -25,6 +28,9 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class GuardianToolCallingManagerTest {
@@ -34,6 +40,7 @@ class GuardianToolCallingManagerTest {
     private GovernancePolicyEngine policyEngine;
     private ToolCapabilityRegistry toolCapabilityRegistry;
     private ToolCallingManager delegate;
+    private AuditService auditService;
     private GuardianToolCallingManager guardian;
     private Prompt prompt;
 
@@ -66,17 +73,19 @@ class GuardianToolCallingManagerTest {
                 .thenReturn(WorkflowCapability.READ_CUSTOMER_DATA);
 
         delegate = mock(ToolCallingManager.class);
+        auditService = mock(AuditService.class);
         guardian = new GuardianToolCallingManager(
                 workflowContextManager,
                 policyEngine,
                 toolCapabilityRegistry,
-                delegate
+                delegate,
+                auditService
         );
         prompt = mock(Prompt.class);
     }
 
     @Test
-    void executesDelegateExactlyOnceAndAdvancesAfterSuccessfulExecution() {
+    void recordsAuditEventsAndAdvancesAfterSuccessfulExecution() {
         String toolCallId = "call-1";
         when(delegate.executeToolCalls(any(), any())).thenReturn(
                 successfulResult(toolCallId)
@@ -86,6 +95,75 @@ class GuardianToolCallingManagerTest {
 
         verify(delegate, times(1)).executeToolCalls(eq(prompt), any(ChatResponse.class));
         assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.PROPOSED_ACTION
+                        && event.toolCallId().equals(toolCallId)
+                        && event.toolName().equals("getCustomerData")
+        ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.POLICY_DECISION
+                        && event.policyDecision() == GovernanceDecision.DecisionType.ALLOW
+        ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
+        ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.WORKFLOW_TRANSITION
+                        && event.nodeBefore() != null
+                        && event.nodeAfter() != null
+                        && "CUSTOMER_DATA".equals(event.nodeAfter().nodeId())
+        ));
+    }
+
+    @Test
+    void recordsBlockedExecutionWithoutDelegateCall() {
+        when(policyEngine.evaluate(any(), any())).thenReturn(
+                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked for test.")
+        );
+
+        assertThrows(
+                GovernanceViolationException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("call-1"))
+        );
+
+        verify(auditService).record(argThat(event ->
+        event.eventType() == AuditEventType.PROPOSED_ACTION
+                && event.toolCallId().equals("call-1")
+                && event.toolName().equals("getCustomerData")
+        ));
+
+        verifyNoInteractions(delegate);
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.POLICY_DECISION
+                        && event.policyDecision() == GovernanceDecision.DecisionType.BLOCK
+        ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.BLOCKED
+        ));
+        assertEquals("START", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void recordsFailedExecutionWithoutWorkflowAdvance() {
+        String toolCallId = "call-1";
+        when(delegate.executeToolCalls(any(), any()))
+                .thenThrow(new IllegalStateException("Tool execution failed."));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse(toolCallId))
+        );
+
+        verify(delegate, times(1)).executeToolCalls(eq(prompt), any(ChatResponse.class));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.FAILED
+                        && "Tool execution failed.".equals(event.errorMessage())
+        ));
+        assertEquals("START", workflowContext.getCurrentNodeId());
     }
 
     @Test
