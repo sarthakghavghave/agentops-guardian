@@ -2,7 +2,6 @@ package com.agentops.guardian.governance.audit;
 
 import org.springframework.stereotype.Component;
 
-@Component
 public class NoOpAuditService implements AuditService {
     @Override
     public void record(AuditEvent event) {
