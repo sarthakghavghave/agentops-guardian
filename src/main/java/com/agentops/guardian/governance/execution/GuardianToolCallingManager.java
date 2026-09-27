@@ -143,8 +143,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         event.toolCallId(),
                         event.toolName(),
                         capability,
-                        decision.decision(),
-                        decision.reason()
+                        decision
                 ));
 
                 if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {

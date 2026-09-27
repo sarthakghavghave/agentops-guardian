@@ -65,7 +65,7 @@ class GuardianToolCallingManagerTest {
 
         policyEngine = mock(GovernancePolicyEngine.class);
         when(policyEngine.evaluate(any(), any())).thenReturn(
-                new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed for test.")
+                new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed for test.", "TEST_POLICY")
         );
 
         toolCapabilityRegistry = mock(ToolCapabilityRegistry.class);
@@ -120,7 +120,7 @@ class GuardianToolCallingManagerTest {
     @Test
     void recordsBlockedExecutionWithoutDelegateCall() {
         when(policyEngine.evaluate(any(), any())).thenReturn(
-                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked for test.")
+                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked for test.", "TEST_POLICY")
         );
 
         assertThrows(
@@ -138,6 +138,7 @@ class GuardianToolCallingManagerTest {
         verify(auditService).record(argThat(event ->
                 event.eventType() == AuditEventType.POLICY_DECISION
                         && event.policyDecision() == GovernanceDecision.DecisionType.BLOCK
+                        && "TEST_POLICY".equals(event.policyId())
         ));
         verify(auditService).record(argThat(event ->
                 event.eventType() == AuditEventType.EXECUTION_OUTCOME
@@ -200,7 +201,7 @@ class GuardianToolCallingManagerTest {
     @Test
     void blocksPolicyViolationBeforeDelegateExecution() {
         when(policyEngine.evaluate(any(), any())).thenReturn(
-                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked for test.")
+                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked for test.", "TEST_POLICY")
         );
 
         assertThrows(

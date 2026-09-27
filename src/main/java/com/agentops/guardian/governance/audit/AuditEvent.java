@@ -18,6 +18,7 @@ public record AuditEvent(
         WorkflowCapability capability,
         Integer sequence,
         GovernanceDecision.DecisionType policyDecision,
+        String policyId,
         String policyReason,
         ExecutionStatus executionStatus,
         String errorType,
@@ -72,6 +73,7 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -83,8 +85,7 @@ public record AuditEvent(
             String toolCallId,
             String toolName,
             WorkflowCapability capability,
-            GovernanceDecision.DecisionType decision,
-            String reason
+            GovernanceDecision decision
     ) {
         return new AuditEvent(
                 workflowId,
@@ -96,8 +97,9 @@ public record AuditEvent(
                 toolName,
                 capability,
                 null,
-                decision,
-                reason,
+                decision.decision(),
+                decision.policyId(),
+                decision.reason(),
                 null,
                 null,
                 null,
@@ -135,6 +137,7 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                null,
                 status,
                 errorType,
                 errorMessage,
@@ -166,6 +169,7 @@ public record AuditEvent(
                 toolCallId,
                 toolName,
                 capability,
+                null,
                 null,
                 null,
                 null,

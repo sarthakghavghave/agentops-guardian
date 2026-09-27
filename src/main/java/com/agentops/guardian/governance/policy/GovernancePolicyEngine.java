@@ -12,6 +12,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class GovernancePolicyEngine {
 
+    private static final String DEFAULT_POLICY_ID = "GOVERNANCE_POLICY_ENGINE";
+
     private final List<GovernancePolicy> policies;
 
     public GovernanceDecision evaluate(WorkflowContext workflow, ToolCallEvent proposedCall) {
@@ -26,7 +28,8 @@ public class GovernancePolicyEngine {
 
         return new GovernanceDecision(
                 GovernanceDecision.DecisionType.ALLOW,
-                "All governance policies passed."
+                "All governance policies passed.",
+                DEFAULT_POLICY_ID
         );
     }
 }

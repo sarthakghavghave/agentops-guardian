@@ -9,6 +9,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class SensitiveDataOutboundPolicy implements GovernancePolicy {
     private static final String EMAIL_TOOL = "sendEmail";
+    private static final String POLICY_ID = "SENSITIVE_DATA_OUTBOUND";
+
+    @Override
+    public String policyId() {
+        return POLICY_ID;
+    }
 
     @Override
     public GovernanceDecision evaluate(WorkflowContext workflow, ToolCallEvent proposedCall) {
@@ -30,12 +36,14 @@ public class SensitiveDataOutboundPolicy implements GovernancePolicy {
 
         return new GovernanceDecision(
                 GovernanceDecision.DecisionType.BLOCK,
-                "Outbound email blocked because the workflow still contains raw customer data.");
+                "Outbound email blocked because the workflow still contains raw customer data.",
+                POLICY_ID);
     }
 
     private GovernanceDecision allow(String reason) {
         return new GovernanceDecision(
                 GovernanceDecision.DecisionType.ALLOW,
-                reason);
+                reason,
+                POLICY_ID);
     }
 }

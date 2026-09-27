@@ -72,6 +72,9 @@ public class AuditEventEntity {
 	@Column(name = "policy_decision", length = 30)
 	private GovernanceDecision.DecisionType policyDecision;
 
+	@Column(name = "policy_id", length = 100)
+	private String policyId;
+
 	@Column(name = "policy_reason", columnDefinition = "text")
 	private String policyReason;
 
@@ -127,6 +130,7 @@ public class AuditEventEntity {
 		entity.capability = event.capability();
 		entity.sequence = event.sequence();
 		entity.policyDecision = event.policyDecision();
+		entity.policyId = event.policyId();
 		entity.policyReason = event.policyReason();
 		entity.executionStatus = event.executionStatus();
 		entity.errorType = event.errorType();

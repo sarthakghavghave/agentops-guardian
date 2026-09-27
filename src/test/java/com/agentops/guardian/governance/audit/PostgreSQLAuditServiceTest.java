@@ -31,7 +31,9 @@ class PostgreSQLAuditServiceTest {
                 WorkflowCapability.READ_CUSTOMER_DATA,
                 2,
                 GovernanceDecision.DecisionType.ALLOW,
+                "TEST_POLICY",
                 "Allowed by policy.",
+
                 AuditEvent.ExecutionStatus.SUCCESS,
                 null,
                 null,
@@ -55,7 +57,7 @@ class PostgreSQLAuditServiceTest {
         assertEquals(event.toolName(), entity.getToolName());
         assertEquals(event.capability(), entity.getCapability());
         assertEquals(event.policyDecision(), entity.getPolicyDecision());
-        assertEquals(event.policyReason(), entity.getPolicyReason());
+        assertEquals("TEST_POLICY", entity.getPolicyId());        assertEquals(event.policyReason(), entity.getPolicyReason());
         assertEquals(event.executionStatus(), entity.getExecutionStatus());
         assertEquals("START", entity.getNodeBeforeId());
         assertEquals(WorkflowState.STARTED, entity.getNodeBeforeState());
