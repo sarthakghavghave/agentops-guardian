@@ -5,5 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface AuditEventRepository extends JpaRepository<AuditEventEntity, Long> {
-    List<AuditEventEntity> findByWorkflowIdOrderByTimestampAsc(String workflowId);
+    List<AuditEventEntity> findByWorkflowIdOrderByTimestampAscIdAsc(String workflowId);
+
+    List<AuditEventEntity> findAllByOrderByWorkflowIdAscTimestampAscIdAsc();
 }
