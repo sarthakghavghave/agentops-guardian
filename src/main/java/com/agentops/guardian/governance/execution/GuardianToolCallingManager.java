@@ -10,6 +10,7 @@ import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.model.DataTransformation;
 import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
@@ -197,6 +198,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 System.out.println("  Reason: " + decision.reason());
             }
 
+            DataTransformation transformationBeforeExecution = workflowContext.getLastTransformation();
             ToolExecutionResult result;
             try {
                 result = delegate.executeToolCalls(prompt, chatResponse);
@@ -208,6 +210,14 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     WorkflowCapability capability = proposedToolCall.capability();
 
                     if (executed) {
+                        DataTransformation transformation = null;
+                        if (capability == WorkflowCapability.GENERATE_REPORT) {
+                            DataTransformation latestTransformation = workflowContext.getLastTransformation();
+                            if (latestTransformation != transformationBeforeExecution) {
+                                transformation = latestTransformation;
+                            }
+                        }
+
                         WorkflowNodeSnapshot beforeSuccess = capability == null ? null : new WorkflowNodeSnapshot(
                                 workflowContext.getCurrentNodeId(),
                                 workflowContext.getCurrentState(),
@@ -227,7 +237,10 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                                 beforeSuccess,
                                 null,
                                 beforeSuccess == null ? null : beforeSuccess.state(),
-                                null
+                                null,
+                                transformation == null ? null : transformation.sourceClassification(),
+                                transformation == null ? null : transformation.resultClassification(),
+                                transformation == null ? null : transformation.transformationType()
                         ));
 
                         if (capability != null) {

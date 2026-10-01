@@ -7,6 +7,8 @@ import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.model.DataClassification;
+import com.agentops.guardian.governance.model.DataTransformation;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
@@ -50,6 +52,7 @@ class GuardianToolCallingManagerTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
+                        WorkflowCapability.GENERATE_REPORT,
                         WorkflowCapability.SEND_EMAIL
                 ),
                 WorkflowGraph.customerReportingGraph()
@@ -166,6 +169,33 @@ class GuardianToolCallingManagerTest {
         ));
         assertEquals("START", workflowContext.getCurrentNodeId());
     }
+
+        @Test
+        void recordsTransformationOnSuccessfulReportExecution() {
+                String toolCallId = "report-call-1";
+                workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
+                when(toolCapabilityRegistry.getCapability("generateReport"))
+                                .thenReturn(WorkflowCapability.GENERATE_REPORT);
+                when(delegate.executeToolCalls(any(), any())).thenAnswer(invocation -> {
+                        workflowContext.recordTransformation(new DataTransformation(
+                                        DataClassification.RAW_CUSTOMER_DATA,
+                                        DataClassification.ANALYTICAL,
+                                        "ANALYTICAL",
+                                        java.time.Instant.now()
+                        ));
+                        return successfulResult(toolCallId);
+                });
+
+                guardian.executeToolCalls(prompt, chatResponse(toolCallId, "generateReport"));
+
+                verify(auditService).record(argThat(event ->
+                                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                                                && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
+                                                && event.classificationBefore() == DataClassification.RAW_CUSTOMER_DATA
+                                                && event.classificationAfter() == DataClassification.ANALYTICAL
+                                                && "ANALYTICAL".equals(event.transformationType())
+                ));
+        }
 
     @Test
     void doesNotAdvanceWorkflowWhenDelegateExecutionFails() {

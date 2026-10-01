@@ -5,6 +5,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.DataTransformation;
 
@@ -53,9 +54,16 @@ public class ReportTools {
                         case REDACTED_DETAIL -> DataClassification.REDACTED_DETAIL;
                 };
 
-                workflowContextManager.current().recordTransformation(
+                WorkflowContext workflowContext = workflowContextManager.current();
+                DataClassification sourceClassification = workflowContext.getCurrentDataClassification();
+                if (sourceClassification == null) {
+                        throw new IllegalStateException(
+                                        "Cannot generate a report without a known source data classification.");
+                }
+
+                workflowContext.recordTransformation(
                                 new DataTransformation(
-                                                DataClassification.RAW_CUSTOMER_DATA,
+                                                sourceClassification,
                                                 resultClassification,
                                                 reportType.name(),
                                                 Instant.now()));

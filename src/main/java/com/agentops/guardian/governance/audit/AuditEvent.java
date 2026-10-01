@@ -1,6 +1,7 @@
 package com.agentops.guardian.governance.audit;
 
 import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
@@ -26,8 +27,58 @@ public record AuditEvent(
         WorkflowNodeSnapshot nodeBefore,
         WorkflowNodeSnapshot nodeAfter,
         WorkflowState stateBefore,
-        WorkflowState stateAfter
+        WorkflowState stateAfter,
+        DataClassification classificationBefore,
+        DataClassification classificationAfter,
+        String transformationType
 ) {
+        public AuditEvent(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            Instant timestamp,
+            AuditEventType eventType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            GovernanceDecision.DecisionType policyDecision,
+            String policyId,
+            String policyReason,
+            ExecutionStatus executionStatus,
+            String errorType,
+            String errorMessage,
+            WorkflowNodeSnapshot nodeBefore,
+            WorkflowNodeSnapshot nodeAfter,
+            WorkflowState stateBefore,
+            WorkflowState stateAfter
+        ) {
+        this(
+            workflowId,
+            agentName,
+            workflowType,
+            timestamp,
+            eventType,
+            toolCallId,
+            toolName,
+            capability,
+            sequence,
+            policyDecision,
+            policyId,
+            policyReason,
+            executionStatus,
+            errorType,
+            errorMessage,
+            nodeBefore,
+            nodeAfter,
+            stateBefore,
+            stateAfter,
+            null,
+            null,
+            null
+        );
+        }
+
     public AuditEvent {
         if (workflowId == null || workflowId.isBlank()) {
             throw new IllegalArgumentException("Workflow id is required.");
@@ -74,6 +125,9 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
                 null
         );
     }
@@ -106,6 +160,9 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
                 null
         );
     }
@@ -125,6 +182,44 @@ public record AuditEvent(
             WorkflowState stateBefore,
             WorkflowState stateAfter
     ) {
+            return executionOutcome(
+                workflowId,
+                agentName,
+                workflowType,
+                toolCallId,
+                toolName,
+                capability,
+                status,
+                errorType,
+                errorMessage,
+                nodeBefore,
+                nodeAfter,
+                stateBefore,
+                stateAfter,
+                null,
+                null,
+                null
+            );
+            }
+
+            public static AuditEvent executionOutcome(
+                String workflowId,
+                String agentName,
+                WorkflowType workflowType,
+                String toolCallId,
+                String toolName,
+                WorkflowCapability capability,
+                ExecutionStatus status,
+                String errorType,
+                String errorMessage,
+                WorkflowNodeSnapshot nodeBefore,
+                WorkflowNodeSnapshot nodeAfter,
+                WorkflowState stateBefore,
+                WorkflowState stateAfter,
+                DataClassification classificationBefore,
+                DataClassification classificationAfter,
+                String transformationType
+            ) {
         return new AuditEvent(
                 workflowId,
                 agentName,
@@ -144,7 +239,10 @@ public record AuditEvent(
                 nodeBefore,
                 nodeAfter,
                 stateBefore,
-                stateAfter
+                stateAfter,
+                classificationBefore,
+                classificationAfter,
+                transformationType
         );
     }
 
@@ -179,7 +277,10 @@ public record AuditEvent(
                 nodeBefore,
                 nodeAfter,
                 stateBefore,
-                stateAfter
+                stateAfter,
+                null,
+                null,
+                null
         );
     }
 

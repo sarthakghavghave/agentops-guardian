@@ -1,6 +1,7 @@
 package com.agentops.guardian.governance.audit;
 
 import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
@@ -118,6 +119,17 @@ public class AuditEventEntity {
 	@Column(name = "state_after", length = 50)
 	private WorkflowState stateAfter;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "classification_before", length = 50)
+	private DataClassification classificationBefore;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "classification_after", length = 50)
+	private DataClassification classificationAfter;
+
+	@Column(name = "transformation_type", length = 100)
+	private String transformationType;
+
 	static AuditEventEntity from(AuditEvent event) {
 		AuditEventEntity entity = new AuditEventEntity();
 		entity.workflowId = event.workflowId();
@@ -147,6 +159,9 @@ public class AuditEventEntity {
 		}
 		entity.stateBefore = event.stateBefore();
 		entity.stateAfter = event.stateAfter();
+		entity.classificationBefore = event.classificationBefore();
+		entity.classificationAfter = event.classificationAfter();
+		entity.transformationType = event.transformationType();
 		return entity;
 	}
 }
