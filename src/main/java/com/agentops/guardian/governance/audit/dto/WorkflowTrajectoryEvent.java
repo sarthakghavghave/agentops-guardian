@@ -7,6 +7,7 @@ import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.risk.GovernanceIntervention;
 import com.agentops.guardian.governance.risk.RiskLevel;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 
 import java.time.Instant;
@@ -37,7 +38,11 @@ public record WorkflowTrajectoryEvent(
         String transformationType,
         RiskLevel riskLevel,
         GovernanceIntervention intervention,
-        String riskReason
+        String riskReason,
+        String interventionId,
+        GovernanceInterventionStatus interventionStatus,
+        String resolvedBy,
+        String resolutionReason
 ) {
 
     public static WorkflowTrajectoryEvent from(AuditEventEntity event) {
@@ -67,7 +72,11 @@ public record WorkflowTrajectoryEvent(
                 event.getTransformationType(),
                 event.getRiskLevel(),
                 event.getIntervention(),
-                event.getRiskReason()
+                event.getRiskReason(),
+                event.getInterventionId(),
+                event.getInterventionStatus(),
+                event.getInterventionResolvedBy(),
+                event.getInterventionResolutionReason()
         );
     }
 }

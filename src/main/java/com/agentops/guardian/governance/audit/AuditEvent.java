@@ -6,6 +6,7 @@ import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.risk.GovernanceIntervention;
 import com.agentops.guardian.governance.risk.RiskDecision;
 import com.agentops.guardian.governance.risk.RiskLevel;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
@@ -36,8 +37,48 @@ public record AuditEvent(
         String transformationType,
         RiskLevel riskLevel,
         GovernanceIntervention intervention,
-        String riskReason
+        String riskReason,
+        String interventionId,
+        GovernanceInterventionStatus interventionStatus,
+        String resolvedBy,
+        String resolutionReason
 ) {
+        public AuditEvent(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            Instant timestamp,
+            AuditEventType eventType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            GovernanceDecision.DecisionType policyDecision,
+            String policyId,
+            String policyReason,
+            ExecutionStatus executionStatus,
+            String errorType,
+            String errorMessage,
+            WorkflowNodeSnapshot nodeBefore,
+            WorkflowNodeSnapshot nodeAfter,
+            WorkflowState stateBefore,
+            WorkflowState stateAfter,
+            DataClassification classificationBefore,
+            DataClassification classificationAfter,
+            String transformationType,
+            RiskLevel riskLevel,
+            com.agentops.guardian.governance.risk.GovernanceIntervention riskIntervention,
+            String riskReason
+        ) {
+        this(
+            workflowId, agentName, workflowType, timestamp, eventType, toolCallId, toolName,
+            capability, sequence, policyDecision, policyId, policyReason, executionStatus,
+            errorType, errorMessage, nodeBefore, nodeAfter, stateBefore, stateAfter,
+            classificationBefore, classificationAfter, transformationType, riskLevel,
+            riskIntervention, riskReason, null, null, null, null
+        );
+        }
+
         public AuditEvent(
             String workflowId,
             String agentName,
@@ -370,6 +411,52 @@ public record AuditEvent(
                 null,
                 null,
                 null
+        );
+    }
+
+    public static AuditEvent interventionLifecycle(
+            com.agentops.guardian.governance.intervention.GovernanceIntervention intervention,
+            AuditEventType eventType
+    ) {
+        if (intervention == null) {
+            throw new IllegalArgumentException("Governance intervention is required.");
+        }
+        if (eventType != AuditEventType.INTERVENTION_CREATED
+                && eventType != AuditEventType.INTERVENTION_APPROVED
+                && eventType != AuditEventType.INTERVENTION_REJECTED
+                && eventType != AuditEventType.INTERVENTION_EXPIRED) {
+            throw new IllegalArgumentException("Intervention lifecycle event type is required.");
+        }
+        return new AuditEvent(
+                intervention.workflowId(),
+                intervention.agentName(),
+                intervention.workflowType(),
+                Instant.now(),
+                eventType,
+                intervention.toolCallId(),
+                null,
+                intervention.capability(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                intervention.classificationAtCreation(),
+                null,
+                null,
+                intervention.riskLevel(),
+                intervention.intervention(),
+                intervention.reason(),
+                intervention.interventionId(),
+                intervention.status(),
+                intervention.resolvedBy(),
+                intervention.resolutionReason()
         );
     }
 

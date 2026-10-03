@@ -8,6 +8,8 @@ import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
+import com.agentops.guardian.governance.intervention.InterventionService;
 import com.agentops.guardian.governance.risk.GovernanceIntervention;
 import com.agentops.guardian.governance.risk.RiskEvaluator;
 import com.agentops.guardian.governance.risk.RiskLevel;
@@ -26,6 +28,7 @@ import com.agentops.guardian.tool.ReportTools;
 import com.agentops.guardian.tool.ToolDataStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -38,6 +41,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -52,6 +56,7 @@ class GuardianToolCallingManagerTest {
     private ToolCapabilityRegistry toolCapabilityRegistry;
     private ToolCallingManager delegate;
     private AuditService auditService;
+        private InterventionService interventionService;
     private GuardianToolCallingManager guardian;
     private Prompt prompt;
 
@@ -86,12 +91,15 @@ class GuardianToolCallingManagerTest {
 
         delegate = mock(ToolCallingManager.class);
         auditService = mock(AuditService.class);
+        interventionService = mock(InterventionService.class);
         guardian = new GuardianToolCallingManager(
                 workflowContextManager,
                 policyEngine,
                 toolCapabilityRegistry,
                 delegate,
-                auditService
+                auditService,
+                new RiskEvaluator(),
+                interventionService
         );
         prompt = mock(Prompt.class);
     }
@@ -132,6 +140,35 @@ class GuardianToolCallingManagerTest {
                         && event.nodeAfter() != null
                         && "CUSTOMER_DATA".equals(event.nodeAfter().nodeId())
         ));
+    }
+
+    @Test
+    void blankProviderIdGetsGuardianIdAndLowRiskCallStillCorrelates() {
+        when(delegate.executeToolCalls(any(), any())).thenReturn(successfulResult("", "getCustomerData"));
+        AssistantMessage.ToolCall call = new AssistantMessage.ToolCall(
+                "", "function", "getCustomerData", "{}"
+        );
+
+        guardian.executeToolCalls(prompt, chatResponse(List.of(call)));
+
+        ArgumentCaptor<AuditEvent> auditEvents = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditService, atLeastOnce()).record(auditEvents.capture());
+        String guardianCallId = auditEvents.getAllValues().stream()
+                .filter(event -> event.eventType() == AuditEventType.PROPOSED_ACTION)
+                .map(AuditEvent::toolCallId)
+                .findFirst()
+                .orElseThrow();
+
+        assertFalse(guardianCallId.isBlank());
+        assertEquals(guardianCallId, workflowContext.getToolCalls().getFirst().toolCallId());
+        assertEquals(guardianCallId, workflowContext.getActions().getFirst().providerToolCallId());
+        assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+        assertEquals(1, auditEvents.getAllValues().stream()
+                .filter(event -> event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
+                        && guardianCallId.equals(event.toolCallId()))
+                .count());
+        verify(delegate, times(1)).executeToolCalls(eq(prompt), any(ChatResponse.class));
     }
 
     @Test
@@ -240,6 +277,12 @@ class GuardianToolCallingManagerTest {
     void blocksInvalidGraphTransitionBeforeDelegateExecution() {
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(interventionService.createPending(
+                eq(workflowContext),
+                eq("email-1"),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        )).thenReturn(pendingIntervention("email-1", "intervention-1"));
 
         assertThrows(
                 IllegalStateException.class,
@@ -260,6 +303,12 @@ class GuardianToolCallingManagerTest {
                 .thenReturn(WorkflowCapability.GENERATE_REPORT);
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(interventionService.createPending(
+                eq(workflowContext),
+                eq("email-1"),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        )).thenReturn(pendingIntervention("email-1", "intervention-1"));
 
         guardian.executeToolCalls(prompt, chatResponse("read-1", "getCustomerData"));
         guardian.executeToolCalls(prompt, chatResponse("report-1", "generateReport"));
@@ -272,6 +321,7 @@ class GuardianToolCallingManagerTest {
         );
 
         assertEquals("email-1", exception.getToolCallId());
+        assertEquals("intervention-1", exception.getInterventionId());
         assertEquals(RiskLevel.HIGH, exception.getRiskDecision().riskLevel());
         assertEquals(GovernanceIntervention.REQUIRE_APPROVAL, exception.getRiskDecision().intervention());
         verify(policyEngine).evaluate(eq(workflowContext), argThat(event -> "sendEmail".equals(event.toolName())));
@@ -289,6 +339,90 @@ class GuardianToolCallingManagerTest {
         verify(delegate, times(2)).executeToolCalls(any(), any());
         assertEquals("REPORT", workflowContext.getCurrentNodeId());
         assertEquals(WorkflowState.REPORT_GENERATED, workflowContext.getCurrentState());
+    }
+
+    @Test
+    void priorApprovalDoesNotAuthorizeAnotherToolCall() {
+        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
+        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
+        workflowContext.recordTransformation(new DataTransformation(
+                DataClassification.RAW_CUSTOMER_DATA,
+                DataClassification.ANALYTICAL,
+                "ANALYTICAL",
+                java.time.Instant.now()
+        ));
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(interventionService.createPending(
+                eq(workflowContext),
+                any(),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        )).thenAnswer(invocation -> pendingIntervention(
+                invocation.getArgument(1),
+                "new-intervention"
+        ));
+
+        assertThrows(ApprovalRequiredException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("approved-call", "sendEmail")));
+        com.agentops.guardian.governance.intervention.GovernanceIntervention resolved =
+                pendingIntervention("approved-call", "old-intervention")
+                .approve("reviewer", "Approved call only.", java.time.Instant.now());
+        assertEquals(GovernanceInterventionStatus.APPROVED, resolved.status());
+
+        ApprovalRequiredException nextCall = assertThrows(
+                ApprovalRequiredException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("later-call", "sendEmail"))
+        );
+
+        assertEquals("later-call", nextCall.getToolCallId());
+        verify(interventionService).createPending(
+                eq(workflowContext), eq("later-call"), eq(WorkflowCapability.SEND_EMAIL), any()
+        );
+        verifyNoInteractions(delegate);
+        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void blankProviderIdGetsGuardianIdForHighRiskIntervention() {
+        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
+        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
+        workflowContext.recordTransformation(new DataTransformation(
+                DataClassification.RAW_CUSTOMER_DATA,
+                DataClassification.ANALYTICAL,
+                "ANALYTICAL",
+                java.time.Instant.now()
+        ));
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(interventionService.createPending(
+                eq(workflowContext),
+                argThat(callId -> callId != null && !callId.isBlank()),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        )).thenAnswer(invocation -> pendingIntervention(
+                invocation.getArgument(1),
+                "generated-id-intervention"
+        ));
+        AssistantMessage.ToolCall call = new AssistantMessage.ToolCall(
+                "", "function", "sendEmail", "{}"
+        );
+
+        ApprovalRequiredException exception = assertThrows(
+                ApprovalRequiredException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse(List.of(call)))
+        );
+
+        assertFalse(exception.getToolCallId().isBlank());
+        assertEquals("generated-id-intervention", exception.getInterventionId());
+        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+        verify(interventionService).createPending(
+                eq(workflowContext),
+                eq(exception.getToolCallId()),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        );
+        verifyNoInteractions(delegate);
     }
 
     @Test
@@ -427,10 +561,14 @@ class GuardianToolCallingManagerTest {
     }
 
     private ToolExecutionResult successfulResult(String toolCallId) {
+        return successfulResult(toolCallId, "getCustomerData");
+    }
+
+    private ToolExecutionResult successfulResult(String toolCallId, String toolName) {
         ToolResponseMessage responseMessage = ToolResponseMessage.builder()
                 .responses(List.of(new ToolResponseMessage.ToolResponse(
                         toolCallId,
-                        "getCustomerData",
+                        toolName,
                         "executed"
                 )))
                 .build();
@@ -453,5 +591,30 @@ class GuardianToolCallingManagerTest {
                         }
                         return successfulResult(toolCall.id());
                 });
+        }
+
+        private com.agentops.guardian.governance.intervention.GovernanceIntervention pendingIntervention(
+                        String toolCallId,
+                        String interventionId
+        ) {
+                return new com.agentops.guardian.governance.intervention.GovernanceIntervention(
+                                interventionId,
+                                workflowContext.getWorkflowId(),
+                                toolCallId,
+                                workflowContext.getAgentName(),
+                                workflowContext.getWorkflowType(),
+                                WorkflowCapability.SEND_EMAIL,
+                                RiskLevel.HIGH,
+                                GovernanceIntervention.REQUIRE_APPROVAL,
+                                GovernanceInterventionStatus.PENDING,
+                                "External communication requires approval.",
+                                java.time.Instant.now(),
+                                null,
+                                null,
+                                null,
+                                workflowContext.getCurrentNodeId(),
+                                workflowContext.getCurrentState(),
+                                workflowContext.getCurrentDataClassification()
+                );
         }
 }

@@ -12,6 +12,7 @@ import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
+import com.agentops.guardian.governance.intervention.InterventionService;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.DataTransformation;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Component
 public class GuardianToolCallingManager implements ToolCallingManager {
@@ -45,6 +47,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final ToolCapabilityRegistry toolCapabilityRegistry;
     private final AuditService auditService;
     private final RiskEvaluator riskEvaluator;
+    private final InterventionService interventionService;
 
     @Autowired
     public GuardianToolCallingManager(
@@ -52,14 +55,16 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             GovernancePolicyEngine policyEngine,
             ToolCapabilityRegistry toolCapabilityRegistry,
             AuditService auditService,
-            RiskEvaluator riskEvaluator) {
+            RiskEvaluator riskEvaluator,
+            InterventionService interventionService) {
         this(
                 workflowContextManager,
                 policyEngine,
                 toolCapabilityRegistry,
                 ToolCallingManager.builder().build(),
                 auditService,
-                riskEvaluator
+                riskEvaluator,
+                interventionService
         );
     }
 
@@ -74,7 +79,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 toolCapabilityRegistry,
                 delegate,
                 new NoOpAuditService(),
-                new RiskEvaluator()
+                new RiskEvaluator(),
+                null
         );
     }
 
@@ -90,7 +96,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 toolCapabilityRegistry,
                 delegate,
                 auditService,
-                new RiskEvaluator()
+                new RiskEvaluator(),
+                null
         );
     }
 
@@ -101,12 +108,32 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             ToolCallingManager delegate,
             AuditService auditService,
             RiskEvaluator riskEvaluator) {
+            this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                riskEvaluator,
+                null
+            );
+            }
+
+            GuardianToolCallingManager(
+                WorkflowContextManager workflowContextManager,
+                GovernancePolicyEngine policyEngine,
+                ToolCapabilityRegistry toolCapabilityRegistry,
+                ToolCallingManager delegate,
+                AuditService auditService,
+                RiskEvaluator riskEvaluator,
+                InterventionService interventionService) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
         this.delegate = delegate;
         this.auditService = auditService;
         this.riskEvaluator = riskEvaluator;
+        this.interventionService = interventionService;
     }
 
     @Override
@@ -120,10 +147,18 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
             WorkflowContext workflowContext = workflowContextManager.current();
                 List<ProposedToolCall> proposedToolCalls = toolCalls.stream()
-                    .map(toolCall -> new ProposedToolCall(
-                        toolCall,
-                        toolCapabilityRegistry.getCapability(toolCall.name())
-                    ))
+                    .map(toolCall -> {
+                        String providerToolCallId = toolCall.id();
+                        String guardianToolCallId = providerToolCallId == null || providerToolCallId.isBlank()
+                                ? UUID.randomUUID().toString()
+                                : providerToolCallId;
+                        return new ProposedToolCall(
+                                toolCall,
+                                toolCapabilityRegistry.getCapability(toolCall.name()),
+                                providerToolCallId,
+                                guardianToolCallId
+                        );
+                    })
                     .toList();
                 long recognizedCapabilityCount = proposedToolCalls.stream()
                     .filter(proposedToolCall -> proposedToolCall.capability() != null)
@@ -140,7 +175,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             for (ProposedToolCall proposedToolCall : proposedToolCalls) {
                 var toolCall = proposedToolCall.toolCall();
                 ToolCallEvent event = new ToolCallEvent(
-                        toolCall.id(),
+                    proposedToolCall.guardianToolCallId(),
                         toolCall.name(),
                         toolCall.arguments(),
                         toolCall.type(),
@@ -215,7 +250,17 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     ));
 
                     if (riskDecision.intervention() == GovernanceIntervention.REQUIRE_APPROVAL) {
-                        throw new ApprovalRequiredException(event.toolCallId(), riskDecision);
+                        if (interventionService == null) {
+                            throw new IllegalStateException("Intervention service is required for approval decisions.");
+                        }
+                        com.agentops.guardian.governance.intervention.GovernanceIntervention intervention =
+                            interventionService.createPending(
+                                workflowContext,
+                                event.toolCallId(),
+                                capability,
+                                riskDecision
+                        );
+                        throw new ApprovalRequiredException(intervention);
                     }
                     if (riskDecision.intervention() == GovernanceIntervention.BLOCK) {
                         throw new GovernanceViolationException(
@@ -226,7 +271,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     Integer sequence = workflowContext.nextActionSequence();
 
                     WorkflowAction action = WorkflowAction.create(
-                            toolCall.id(),
+                            proposedToolCall.guardianToolCallId(),
                             sequence,
                             toolCall.name(),
                             capability,
@@ -234,7 +279,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     );
 
                     workflowContext.addAction(action);
-                    proposedCapabilities.add(new ProposedCapability(toolCall.id(), capability));
+                    proposedCapabilities.add(new ProposedCapability(proposedToolCall.guardianToolCallId(), capability));
                 }
 
                 logToolCall(event);
@@ -249,11 +294,11 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             ToolExecutionResult result;
             try {
                 result = delegate.executeToolCalls(prompt, chatResponse);
-                Set<String> executedToolCallIds = successfulToolCallIds(result);
+                Set<String> executedGuardianToolCallIds = successfulGuardianToolCallIds(result, proposedToolCalls);
 
                 for (ProposedToolCall proposedToolCall : proposedToolCalls) {
-                    String toolCallId = proposedToolCall.toolCall().id();
-                    boolean executed = executedToolCallIds.contains(toolCallId);
+                    String toolCallId = proposedToolCall.guardianToolCallId();
+                    boolean executed = executedGuardianToolCallIds.contains(toolCallId);
                     WorkflowCapability capability = proposedToolCall.capability();
 
                     if (executed) {
@@ -325,7 +370,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             } catch (RuntimeException ex) {
                 for (ProposedToolCall proposedToolCall : proposedToolCalls) {
                     WorkflowCapability capability = proposedToolCall.capability();
-                    String toolId = proposedToolCall.toolCall().id();
+                    String toolId = proposedToolCall.guardianToolCallId();
                     WorkflowNodeSnapshot failedBefore = capability == null ? null : new WorkflowNodeSnapshot(
                             workflowContext.getCurrentNodeId(),
                             workflowContext.getCurrentState(),
@@ -378,21 +423,43 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         );
     }
 
-    private Set<String> successfulToolCallIds(ToolExecutionResult result) {
-        Set<String> toolCallIds = new HashSet<>();
-
+    private Set<String> successfulGuardianToolCallIds(
+            ToolExecutionResult result,
+            List<ProposedToolCall> proposedToolCalls
+    ) {
+        Set<String> successfulIds = new HashSet<>();
         if (result == null || result.conversationHistory() == null) {
-            return toolCallIds;
+            return successfulIds;
         }
 
-        result.conversationHistory().stream()
+        List<ToolResponseMessage.ToolResponse> responses = result.conversationHistory().stream()
                 .filter(ToolResponseMessage.class::isInstance)
                 .map(ToolResponseMessage.class::cast)
                 .flatMap(message -> message.getResponses().stream())
-                .map(ToolResponseMessage.ToolResponse::id)
-                .forEach(toolCallIds::add);
+                .toList();
 
-        return toolCallIds;
+        boolean[] matchedResponses = new boolean[responses.size()];
+        for (ProposedToolCall proposedToolCall : proposedToolCalls) {
+            for (int index = 0; index < responses.size(); index++) {
+                if (matchedResponses[index]) {
+                    continue;
+                }
+                ToolResponseMessage.ToolResponse response = responses.get(index);
+                boolean providerIdPresent = proposedToolCall.providerToolCallId() != null
+                        && !proposedToolCall.providerToolCallId().isBlank();
+                boolean matches = providerIdPresent
+                        ? proposedToolCall.providerToolCallId().equals(response.id())
+                        : (response.id() == null || response.id().isBlank())
+                                && proposedToolCall.toolCall().name().equals(response.name());
+                if (matches) {
+                    matchedResponses[index] = true;
+                    successfulIds.add(proposedToolCall.guardianToolCallId());
+                    break;
+                }
+            }
+        }
+
+        return successfulIds;
     }
 
     private String sanitizeError(RuntimeException ex) {
@@ -405,7 +472,9 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
     private record ProposedToolCall(
             AssistantMessage.ToolCall toolCall,
-            WorkflowCapability capability
+            WorkflowCapability capability,
+            String providerToolCallId,
+            String guardianToolCallId
     ) {}
 
     private record ProposedCapability(String toolCallId, WorkflowCapability capability) {}

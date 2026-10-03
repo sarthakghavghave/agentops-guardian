@@ -71,6 +71,10 @@ class WorkflowTrajectoryControllerTest {
                 "ANALYTICAL",
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
                 null
         );
         when(trajectoryService.getTrajectory("workflow-1")).thenReturn(
