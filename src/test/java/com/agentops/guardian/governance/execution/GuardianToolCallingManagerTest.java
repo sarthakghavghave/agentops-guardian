@@ -5,16 +5,25 @@ import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskEvaluator;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.DataTransformation;
+import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
 import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
+import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.tool.ReportTools;
+import com.agentops.guardian.tool.ToolDataStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -113,6 +122,11 @@ class GuardianToolCallingManagerTest {
                         && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
         ));
         verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && event.riskLevel() == RiskLevel.LOW
+                        && event.intervention() == GovernanceIntervention.NONE
+        ));
+        verify(auditService).record(argThat(event ->
                 event.eventType() == AuditEventType.WORKFLOW_TRANSITION
                         && event.nodeBefore() != null
                         && event.nodeAfter() != null
@@ -167,6 +181,10 @@ class GuardianToolCallingManagerTest {
                         && event.executionStatus() == AuditEvent.ExecutionStatus.FAILED
                         && "Tool execution failed.".equals(event.errorMessage())
         ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && event.intervention() == GovernanceIntervention.NONE
+        ));
         assertEquals("START", workflowContext.getCurrentNodeId());
     }
 
@@ -194,6 +212,10 @@ class GuardianToolCallingManagerTest {
                                                 && event.classificationBefore() == DataClassification.RAW_CUSTOMER_DATA
                                                 && event.classificationAfter() == DataClassification.ANALYTICAL
                                                 && "ANALYTICAL".equals(event.transformationType())
+                ));
+                verify(auditService).record(argThat(event ->
+                                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                                                && event.intervention() == GovernanceIntervention.AUDIT
                 ));
         }
 
@@ -225,7 +247,122 @@ class GuardianToolCallingManagerTest {
         );
 
         verifyNoInteractions(delegate);
+        verify(auditService, never()).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+        ));
         assertEquals("START", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void requiresApprovalAfterAnalyticalReportWithoutExecutingOrAdvancingEmail() {
+        configureReadAndReportDelegate();
+        when(toolCapabilityRegistry.getCapability("generateReport"))
+                .thenReturn(WorkflowCapability.GENERATE_REPORT);
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+
+        guardian.executeToolCalls(prompt, chatResponse("read-1", "getCustomerData"));
+        guardian.executeToolCalls(prompt, chatResponse("report-1", "generateReport"));
+        assertEquals(DataClassification.ANALYTICAL, workflowContext.getCurrentDataClassification());
+        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+
+        ApprovalRequiredException exception = assertThrows(
+                ApprovalRequiredException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("email-1", "sendEmail"))
+        );
+
+        assertEquals("email-1", exception.getToolCallId());
+        assertEquals(RiskLevel.HIGH, exception.getRiskDecision().riskLevel());
+        assertEquals(GovernanceIntervention.REQUIRE_APPROVAL, exception.getRiskDecision().intervention());
+        verify(policyEngine).evaluate(eq(workflowContext), argThat(event -> "sendEmail".equals(event.toolName())));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.POLICY_DECISION
+                        && event.toolName().equals("sendEmail")
+                        && event.policyDecision() == GovernanceDecision.DecisionType.ALLOW
+        ));
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && event.toolCallId().equals("email-1")
+                        && event.riskLevel() == RiskLevel.HIGH
+                        && event.intervention() == GovernanceIntervention.REQUIRE_APPROVAL
+        ));
+        verify(delegate, times(2)).executeToolCalls(any(), any());
+        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+        assertEquals(WorkflowState.REPORT_GENERATED, workflowContext.getCurrentState());
+    }
+
+    @Test
+    void explicitRawDataPolicyBlockRemainsAuthoritativeBeforeRiskIntervention() {
+        when(delegate.executeToolCalls(any(), any())).thenAnswer(invocation -> {
+            ChatResponse response = invocation.getArgument(1);
+            String callId = response.getResult().getOutput().getToolCalls().getFirst().id();
+            workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
+            return successfulResult(callId);
+        });
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        guardian.executeToolCalls(prompt, chatResponse("read-raw", "getCustomerData"));
+
+        assertEquals(RiskLevel.CRITICAL,
+                new RiskEvaluator().assess(workflowContext, WorkflowCapability.SEND_EMAIL).level());
+        when(policyEngine.evaluate(any(), any())).thenAnswer(invocation -> {
+            ToolCallEvent event = invocation.getArgument(1);
+            return "sendEmail".equals(event.toolName())
+                    ? new GovernanceDecision(
+                            GovernanceDecision.DecisionType.BLOCK,
+                            "Outbound email blocked because the workflow still contains raw customer data.",
+                            "SENSITIVE_DATA_OUTBOUND"
+                    )
+                    : new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed for test.", "TEST_POLICY");
+        });
+
+        GovernanceViolationException exception = assertThrows(
+                GovernanceViolationException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("email-raw", "sendEmail"))
+        );
+
+        assertEquals("Outbound email blocked because the workflow still contains raw customer data.",
+                exception.getMessage());
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.POLICY_DECISION
+                        && event.policyDecision() == GovernanceDecision.DecisionType.BLOCK
+                        && "SENSITIVE_DATA_OUTBOUND".equals(event.policyId())
+        ));
+        verify(auditService, never()).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && "email-raw".equals(event.toolCallId())
+        ));
+        verify(delegate, times(1)).executeToolCalls(any(), any());
+        assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void criticalRiskBlocksEvenWhenPolicyAllows() {
+        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
+        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
+        workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+
+        GovernanceViolationException exception = assertThrows(
+                GovernanceViolationException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("email-critical", "sendEmail"))
+        );
+
+        assertEquals(
+                "Risk intervention BLOCK: External communication is being attempted while the workflow still contains raw customer data.",
+                exception.getMessage()
+        );
+        verify(policyEngine).evaluate(any(), any());
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && event.policyDecision() == null
+                        && event.riskLevel() == RiskLevel.CRITICAL
+                        && event.intervention() == GovernanceIntervention.BLOCK
+                        && event.riskReason().contains("raw customer data")
+        ));
+        verifyNoInteractions(delegate);
+        assertEquals("REPORT", workflowContext.getCurrentNodeId());
     }
 
     @Test
@@ -301,4 +438,20 @@ class GuardianToolCallingManagerTest {
                 .conversationHistory(List.of(responseMessage))
                 .build();
     }
+
+        private void configureReadAndReportDelegate() {
+                ToolDataStore toolDataStore = new ToolDataStore(workflowContextManager);
+                toolDataStore.storeCustomerData(new CustomerDataTools.CustomerDataSet("Test City", 0, List.of()));
+                ReportTools reportTools = new ReportTools(toolDataStore, workflowContextManager);
+                when(delegate.executeToolCalls(any(), any())).thenAnswer(invocation -> {
+                        ChatResponse response = invocation.getArgument(1);
+                        AssistantMessage.ToolCall toolCall = response.getResult().getOutput().getToolCalls().getFirst();
+                        if ("getCustomerData".equals(toolCall.name())) {
+                                workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
+                        } else if ("generateReport".equals(toolCall.name())) {
+                                reportTools.generateReport(ReportTools.ReportType.ANALYTICAL);
+                        }
+                        return successfulResult(toolCall.id());
+                });
+        }
 }

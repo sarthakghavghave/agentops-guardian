@@ -3,6 +3,8 @@ package com.agentops.guardian.governance.audit;
 import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import jakarta.persistence.Access;
@@ -130,6 +132,17 @@ public class AuditEventEntity {
 	@Column(name = "transformation_type", length = 100)
 	private String transformationType;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "risk_level", length = 30)
+	private RiskLevel riskLevel;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "intervention", length = 40)
+	private GovernanceIntervention intervention;
+
+	@Column(name = "risk_reason", columnDefinition = "text")
+	private String riskReason;
+
 	static AuditEventEntity from(AuditEvent event) {
 		AuditEventEntity entity = new AuditEventEntity();
 		entity.workflowId = event.workflowId();
@@ -162,6 +175,9 @@ public class AuditEventEntity {
 		entity.classificationBefore = event.classificationBefore();
 		entity.classificationAfter = event.classificationAfter();
 		entity.transformationType = event.transformationType();
+		entity.riskLevel = event.riskLevel();
+		entity.intervention = event.intervention();
+		entity.riskReason = event.riskReason();
 		return entity;
 	}
 }

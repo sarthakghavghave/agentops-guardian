@@ -5,6 +5,8 @@ import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 
 import java.time.Instant;
@@ -32,7 +34,10 @@ public record WorkflowTrajectoryEvent(
         WorkflowState stateAfter,
         DataClassification classificationBefore,
         DataClassification classificationAfter,
-        String transformationType
+        String transformationType,
+        RiskLevel riskLevel,
+        GovernanceIntervention intervention,
+        String riskReason
 ) {
 
     public static WorkflowTrajectoryEvent from(AuditEventEntity event) {
@@ -59,7 +64,10 @@ public record WorkflowTrajectoryEvent(
                 event.getStateAfter(),
                 event.getClassificationBefore(),
                 event.getClassificationAfter(),
-                event.getTransformationType()
+                event.getTransformationType(),
+                event.getRiskLevel(),
+                event.getIntervention(),
+                event.getRiskReason()
         );
     }
 }

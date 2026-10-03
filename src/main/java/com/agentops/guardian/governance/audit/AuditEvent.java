@@ -3,6 +3,9 @@ package com.agentops.guardian.governance.audit;
 import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskDecision;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
@@ -30,8 +33,43 @@ public record AuditEvent(
         WorkflowState stateAfter,
         DataClassification classificationBefore,
         DataClassification classificationAfter,
-        String transformationType
+        String transformationType,
+        RiskLevel riskLevel,
+        GovernanceIntervention intervention,
+        String riskReason
 ) {
+        public AuditEvent(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            Instant timestamp,
+            AuditEventType eventType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            GovernanceDecision.DecisionType policyDecision,
+            String policyId,
+            String policyReason,
+            ExecutionStatus executionStatus,
+            String errorType,
+            String errorMessage,
+            WorkflowNodeSnapshot nodeBefore,
+            WorkflowNodeSnapshot nodeAfter,
+            WorkflowState stateBefore,
+            WorkflowState stateAfter,
+            DataClassification classificationBefore,
+            DataClassification classificationAfter,
+            String transformationType
+        ) {
+        this(
+            workflowId, agentName, workflowType, timestamp, eventType, toolCallId, toolName,
+            capability, sequence, policyDecision, policyId, policyReason, executionStatus,
+            errorType, errorMessage, nodeBefore, nodeAfter, stateBefore, stateAfter,
+            classificationBefore, classificationAfter, transformationType, null, null, null
+        );
+        }
+
         public AuditEvent(
             String workflowId,
             String agentName,
@@ -128,6 +166,9 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
                 null
         );
     }
@@ -154,6 +195,9 @@ public record AuditEvent(
                 decision.decision(),
                 decision.policyId(),
                 decision.reason(),
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -242,9 +286,51 @@ public record AuditEvent(
                 stateAfter,
                 classificationBefore,
                 classificationAfter,
-                transformationType
+                transformationType,
+                null,
+                null,
+                null
         );
     }
+
+            public static AuditEvent riskAssessment(
+                String workflowId,
+                String agentName,
+                WorkflowType workflowType,
+                String toolCallId,
+                String toolName,
+                WorkflowCapability capability,
+                Integer sequence,
+                RiskDecision riskDecision
+            ) {
+            return new AuditEvent(
+                workflowId,
+                agentName,
+                workflowType,
+                Instant.now(),
+                AuditEventType.RISK_ASSESSMENT,
+                toolCallId,
+                toolName,
+                capability,
+                sequence,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                riskDecision.riskLevel(),
+                riskDecision.intervention(),
+                riskDecision.reason()
+            );
+            }
 
     public static AuditEvent workflowTransition(
             String workflowId,
@@ -278,6 +364,9 @@ public record AuditEvent(
                 nodeAfter,
                 stateBefore,
                 stateAfter,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null

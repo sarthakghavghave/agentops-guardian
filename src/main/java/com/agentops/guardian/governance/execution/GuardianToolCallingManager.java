@@ -4,8 +4,12 @@ import com.agentops.guardian.governance.audit.AuditEvent;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.audit.NoOpAuditService;
 import com.agentops.guardian.governance.audit.WorkflowNodeSnapshot;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskDecision;
+import com.agentops.guardian.governance.risk.RiskEvaluator;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.ToolCallEvent;
@@ -40,19 +44,22 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final WorkflowContextManager workflowContextManager;
     private final ToolCapabilityRegistry toolCapabilityRegistry;
     private final AuditService auditService;
+    private final RiskEvaluator riskEvaluator;
 
     @Autowired
     public GuardianToolCallingManager(
             WorkflowContextManager workflowContextManager,
             GovernancePolicyEngine policyEngine,
             ToolCapabilityRegistry toolCapabilityRegistry,
-            AuditService auditService) {
+            AuditService auditService,
+            RiskEvaluator riskEvaluator) {
         this(
                 workflowContextManager,
                 policyEngine,
                 toolCapabilityRegistry,
                 ToolCallingManager.builder().build(),
-                auditService
+                auditService,
+                riskEvaluator
         );
     }
 
@@ -66,7 +73,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 policyEngine,
                 toolCapabilityRegistry,
                 delegate,
-                new NoOpAuditService()
+                new NoOpAuditService(),
+                new RiskEvaluator()
         );
     }
 
@@ -76,11 +84,29 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             ToolCapabilityRegistry toolCapabilityRegistry,
             ToolCallingManager delegate,
             AuditService auditService) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator()
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService,
+            RiskEvaluator riskEvaluator) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
         this.delegate = delegate;
         this.auditService = auditService;
+        this.riskEvaluator = riskEvaluator;
     }
 
     @Override
@@ -175,6 +201,27 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
                 if (capability != null) {
                     workflowContext.validateCapabilityTransition(capability);
+
+                    RiskDecision riskDecision = RiskDecision.from(riskEvaluator.assess(workflowContext, capability));
+                    auditService.record(AuditEvent.riskAssessment(
+                            workflowContext.getWorkflowId(),
+                            workflowContext.getAgentName(),
+                            workflowContext.getWorkflowType(),
+                            event.toolCallId(),
+                            event.toolName(),
+                            capability,
+                            workflowContext.nextActionSequence(),
+                            riskDecision
+                    ));
+
+                    if (riskDecision.intervention() == GovernanceIntervention.REQUIRE_APPROVAL) {
+                        throw new ApprovalRequiredException(event.toolCallId(), riskDecision);
+                    }
+                    if (riskDecision.intervention() == GovernanceIntervention.BLOCK) {
+                        throw new GovernanceViolationException(
+                                "Risk intervention BLOCK: " + riskDecision.reason()
+                        );
+                    }
 
                     Integer sequence = workflowContext.nextActionSequence();
 

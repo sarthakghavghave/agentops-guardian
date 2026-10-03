@@ -68,7 +68,10 @@ class WorkflowTrajectoryControllerTest {
                 WorkflowState.REPORT_GENERATED,
                 DataClassification.RAW_CUSTOMER_DATA,
                 DataClassification.ANALYTICAL,
-                "ANALYTICAL"
+                "ANALYTICAL",
+                null,
+                null,
+                null
         );
         when(trajectoryService.getTrajectory("workflow-1")).thenReturn(
                 new WorkflowTrajectoryResponse(

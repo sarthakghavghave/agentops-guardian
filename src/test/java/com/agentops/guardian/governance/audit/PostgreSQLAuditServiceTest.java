@@ -2,12 +2,19 @@ package com.agentops.guardian.governance.audit;
 
 import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskAssessment;
+import com.agentops.guardian.governance.risk.RiskDecision;
+import com.agentops.guardian.governance.risk.RiskFactor;
+import com.agentops.guardian.governance.risk.RiskFactorType;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -69,5 +76,37 @@ class PostgreSQLAuditServiceTest {
         assertNull(entity.getClassificationBefore());
         assertNull(entity.getClassificationAfter());
         assertNull(entity.getTransformationType());
+    }
+
+    @Test
+    void mapsRiskInterventionMetadataToEntity() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        PostgreSQLAuditService service = new PostgreSQLAuditService(repository);
+        RiskAssessment assessment = new RiskAssessment(
+                RiskLevel.HIGH,
+                List.of(new RiskFactor(RiskFactorType.EXTERNAL_SIDE_EFFECT, "External communication.")),
+                "External communication requires approval."
+        );
+        RiskDecision decision = RiskDecision.from(assessment);
+        AuditEvent event = AuditEvent.riskAssessment(
+                "workflow-risk",
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING,
+                "email-1",
+                "sendEmail",
+                WorkflowCapability.SEND_EMAIL,
+                3,
+                decision
+        );
+
+        service.record(event);
+
+        ArgumentCaptor<AuditEventEntity> entityCaptor = ArgumentCaptor.forClass(AuditEventEntity.class);
+        verify(repository).save(entityCaptor.capture());
+        AuditEventEntity entity = entityCaptor.getValue();
+        assertEquals(RiskLevel.HIGH, entity.getRiskLevel());
+        assertEquals(GovernanceIntervention.REQUIRE_APPROVAL, entity.getIntervention());
+        assertEquals("External communication requires approval.", entity.getRiskReason());
+        assertEquals(null, entity.getPolicyDecision());
     }
 }
