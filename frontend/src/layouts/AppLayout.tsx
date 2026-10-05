@@ -13,6 +13,8 @@ export function AppLayout() {
   const { pathname } = useLocation()
   const pageTitle = pathname.startsWith('/workflows/')
     ? 'Workflow details'
+    : pathname.startsWith('/interventions/')
+      ? 'Intervention details'
     : pageNames[pathname] ?? 'AgentOps Guardian'
 
   return (

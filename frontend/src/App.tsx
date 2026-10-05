@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './layouts/AppLayout'
 import { DashboardPage } from './pages/DashboardPage'
 import { InterventionsPage } from './pages/InterventionsPage'
+import { InterventionDetailsPage } from './pages/InterventionDetailsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
 import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage'
 import { WorkflowsPage } from './pages/WorkflowsPage'
@@ -27,6 +28,7 @@ export function App() {
             <Route path="/workflows" element={<WorkflowsPage />} />
             <Route path="/workflows/:workflowId" element={<WorkflowDetailsPage />} />
             <Route path="/interventions" element={<InterventionsPage />} />
+            <Route path="/interventions/:interventionId" element={<InterventionDetailsPage />} />
             <Route path="/policies" element={<PoliciesPage />} />
             <Route path="*" element={<Navigate replace to="/dashboard" />} />
           </Route>

@@ -21,8 +21,8 @@ export type WorkflowSummaryResponse = {
   workflowType: WorkflowType
   startedAt: string
   lastEventAt: string
-  currentNodeId: string
-  currentState: WorkflowState
+  currentNodeId: string | null
+  currentState: WorkflowState | null
   eventCount: number
 }
 
