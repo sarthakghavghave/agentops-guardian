@@ -7,6 +7,7 @@ import { LoadingState } from '../../components/feedback/LoadingState'
 import { Panel } from '../../components/ui/Panel'
 import { usePolicy } from '../../hooks/usePolicies'
 import type { PolicyDefinition } from '../../types/policy'
+import { PolicyRuntimeEvidence } from './PolicyRuntimeEvidence'
 import {
   policyConditionPhrase,
   policyExplanation,
@@ -117,6 +118,7 @@ function PolicyDetail({ policy }: { policy: PolicyDefinition }) {
       <Panel title="Policy interpretation">
         <p className="p-4 text-sm leading-6 text-slate-700 sm:p-5">{policyExplanation(policy)}</p>
       </Panel>
+      <PolicyRuntimeEvidence policy={policy} />
     </div>
   )
 }
