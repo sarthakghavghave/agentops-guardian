@@ -5,6 +5,8 @@ import { DashboardPage } from './pages/DashboardPage'
 import { InterventionsPage } from './pages/InterventionsPage'
 import { InterventionDetailsPage } from './pages/InterventionDetailsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
+import { PolicyDetailsPage } from './pages/PolicyDetailsPage'
+import { PolicyAuthoringPage } from './pages/PolicyAuthoringPage'
 import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage'
 import { WorkflowsPage } from './pages/WorkflowsPage'
 
@@ -30,6 +32,9 @@ export function App() {
             <Route path="/interventions" element={<InterventionsPage />} />
             <Route path="/interventions/:interventionId" element={<InterventionDetailsPage />} />
             <Route path="/policies" element={<PoliciesPage />} />
+            <Route path="/policies/new" element={<PolicyAuthoringPage />} />
+            <Route path="/policies/:policyId/edit" element={<PolicyAuthoringPage />} />
+            <Route path="/policies/:policyId" element={<PolicyDetailsPage />} />
             <Route path="*" element={<Navigate replace to="/dashboard" />} />
           </Route>
         </Routes>
