@@ -8,4 +8,6 @@ public interface AuditEventRepository extends JpaRepository<AuditEventEntity, Lo
     List<AuditEventEntity> findByWorkflowIdOrderByTimestampAscIdAsc(String workflowId);
 
     List<AuditEventEntity> findAllByOrderByWorkflowIdAscTimestampAscIdAsc();
+
+    List<AuditEventEntity> findAllByIdGreaterThanOrderByIdAsc(Long id);
 }
