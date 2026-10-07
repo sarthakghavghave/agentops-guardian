@@ -112,6 +112,11 @@ export function latestAvailable<T>(
   return null
 }
 
+export function getGroupInterventionId(group: WorkflowTrajectoryGroup): string | null {
+  const events = group.kind === 'action' ? group.events : [group.event]
+  return latestAvailable(events, (event) => event.interventionId)
+}
+
 function governanceOutcome(
   event: WorkflowTrajectoryEvent,
 ): WorkflowGovernanceSummary['latestGovernanceOutcome'] {

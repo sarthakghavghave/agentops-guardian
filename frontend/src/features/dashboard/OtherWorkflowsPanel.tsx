@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Panel } from '../../components/ui/Panel'
@@ -6,7 +6,9 @@ import { queryKeys } from '../../hooks/queryKeys'
 import type { WorkflowSummaryResponse, WorkflowTrajectoryResponse } from '../../types/workflow'
 import {
   formatGovernanceLabel,
+  getGroupInterventionId,
   getWorkflowGovernanceSummary,
+  groupTrajectoryEvents,
 } from './workflowPresentation'
 
 function formatTimestamp(timestamp: string): string {
@@ -25,6 +27,12 @@ function OtherWorkflowRow({ workflow }: { workflow: WorkflowSummaryResponse }) {
     queryKeys.workflows.trajectory(workflow.workflowId),
   )
   const summary = trajectory ? getWorkflowGovernanceSummary(trajectory) : null
+  const attentionGroup = summary?.attentionGroupKey
+    ? groupTrajectoryEvents(trajectory?.events ?? []).find(
+        (group) => group.key === summary.attentionGroupKey,
+      )
+    : undefined
+  const interventionId = attentionGroup ? getGroupInterventionId(attentionGroup) : null
   const attention =
     summary?.attentionLevel === 'BLOCKED'
       ? { label: 'Blocked', className: 'border-red-200 bg-red-50 text-red-800' }
@@ -41,38 +49,50 @@ function OtherWorkflowRow({ workflow }: { workflow: WorkflowSummaryResponse }) {
           : null
 
   return (
-    <Link
-      className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-      to={`/workflows/${encodeURIComponent(workflow.workflowId)}`}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-ink-900">
-          {workflow.agentName}
-        </span>
-        <span className="mt-0.5 block truncate text-xs text-muted">
-          {workflow.workflowType === 'CUSTOMER_REPORTING'
-            ? 'Customer Reporting'
-            : 'Customer Support'}
-          {' · '}
-          {workflow.workflowId}
-        </span>
-        <span className="mt-0.5 block truncate text-[11px] text-muted">
-          Last activity {formatTimestamp(workflow.lastEventAt)}
-        </span>
-      </span>
-      <span className="flex shrink-0 flex-col items-end gap-1">
-        <span className="rounded bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-          {workflow.currentState
-            ? formatGovernanceLabel(workflow.currentState)
-            : 'State unavailable'}
-        </span>
-        {attention && (
-          <span className={`rounded border px-2 py-0.5 text-[10px] font-medium ${attention.className}`}>
-            {attention.label}
+    <div className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50">
+      <Link
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        to={`/workflows/${encodeURIComponent(workflow.workflowId)}`}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-ink-900">
+            {workflow.agentName}
           </span>
-        )}
-      </span>
-    </Link>
+          <span className="mt-0.5 block truncate text-xs text-muted">
+            {workflow.workflowType === 'CUSTOMER_REPORTING'
+              ? 'Customer Reporting'
+              : 'Customer Support'}
+            {' · '}
+            {workflow.workflowId}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-muted">
+            Last activity {formatTimestamp(workflow.lastEventAt)}
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <span className="rounded bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
+            {workflow.currentState
+              ? formatGovernanceLabel(workflow.currentState)
+              : 'State unavailable'}
+          </span>
+          {attention && (
+            <span className={`rounded border px-2 py-0.5 text-[10px] font-medium ${attention.className}`}>
+              {attention.label}
+            </span>
+          )}
+        </span>
+      </Link>
+      {interventionId && (
+        <Link
+          aria-label={`Review intervention ${interventionId}`}
+          className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-sm text-xs font-medium text-accent hover:text-accent/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          to={`/interventions/${encodeURIComponent(interventionId)}`}
+        >
+          <span className="hidden sm:inline">Review</span>
+          <ArrowUpRight aria-hidden="true" size={14} />
+        </Link>
+      )}
+    </div>
   )
 }
 

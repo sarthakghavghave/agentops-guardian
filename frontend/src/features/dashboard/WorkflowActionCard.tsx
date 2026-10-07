@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import type { WorkflowTrajectoryEvent } from '../../types/audit'
 import type {
   GovernanceInterventionKind,
@@ -9,6 +10,7 @@ import type { RiskLevel } from '../../types/policy'
 import {
   availableValues,
   formatGovernanceLabel,
+  getGroupInterventionId,
   latestAvailable,
   type GovernanceAttentionLevel,
   type WorkflowTrajectoryGroup,
@@ -83,6 +85,7 @@ function MetadataRow({ label, children }: { label: string; children: ReactNode }
 }
 
 function ActionDetails({ events }: { events: WorkflowTrajectoryEvent[] }) {
+  const interventionId = latestAvailable(events, (event) => event.interventionId)
   const policyDecisions = availableValues(events, (event) => event.policyDecision)
   const policyIds = availableValues(events, (event) => event.policyId)
   const policyReasons = availableValues(events, (event) => event.policyReason)
@@ -170,6 +173,18 @@ function ActionDetails({ events }: { events: WorkflowTrajectoryEvent[] }) {
           </div>
         </MetadataRow>
       )}
+      {interventionId && (
+        <MetadataRow label="Review">
+          <Link
+            aria-label={`Review intervention ${interventionId}`}
+            className="inline-flex min-h-8 items-center font-medium text-accent underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            to={`/interventions/${encodeURIComponent(interventionId)}`}
+          >
+            Review intervention →
+          </Link>
+          <p className="mt-1 break-all font-mono text-[11px] text-muted">{interventionId}</p>
+        </MetadataRow>
+      )}
       {executionStatuses.length > 0 && (
         <MetadataRow label="Execution">
           <div className="flex flex-wrap gap-1.5">
@@ -239,6 +254,7 @@ function ActionCard({
   const interventionStatus = latestAvailable(events, (event) => event.interventionStatus)
   const executionStatus = latestAvailable(events, (event) => event.executionStatus)
   const riskLevel = latestAvailable(events, (event) => event.riskLevel)
+  const interventionId = getGroupInterventionId(group)
   const capability = latestAvailable(events, (event) => event.capability)
   const toolName = latestAvailable(events, (event) => event.toolName)
   const title = toolName
@@ -283,6 +299,13 @@ function ActionCard({
             ? { label: formatGovernanceLabel(executionStatus), tone: executionTone(executionStatus) }
             : null
   const secondaryBadges = [
+    interventionId &&
+    interventionStatus &&
+    (!requiresApproval || interventionStatus !== 'PENDING') ? {
+      key: 'intervention-status',
+      label: formatGovernanceLabel(interventionStatus),
+      tone: interventionTone(interventionStatus),
+    } : null,
     riskLevel ? {
       key: 'risk',
       label: formatGovernanceLabel(riskLevel),
@@ -293,7 +316,7 @@ function ActionCard({
       label: formatGovernanceLabel(executionStatus),
       tone: executionTone(executionStatus),
     } : null,
-    interventionStatus && (!requiresApproval || interventionStatus !== 'PENDING') ? {
+    interventionStatus && !interventionId && (!requiresApproval || interventionStatus !== 'PENDING') ? {
       key: 'intervention-status',
       label: formatGovernanceLabel(interventionStatus),
       tone: interventionTone(interventionStatus),
