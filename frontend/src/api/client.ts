@@ -1,6 +1,8 @@
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 const apiBaseUrl = import.meta.env.DEV ? '' : configuredBaseUrl.replace(/\/$/, '')
 
+export const getApiUrl = (path: string) => `${apiBaseUrl}/api${path}`
+
 export class ApiError extends Error {
   readonly status: number
 
@@ -12,7 +14,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}/api${path}`, {
+  const response = await fetch(getApiUrl(path), {
     ...init,
     headers: {
       Accept: 'application/json',
