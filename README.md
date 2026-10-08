@@ -124,6 +124,10 @@ The primary quantitative comparison is an explicitly paired Governance ON versus
 
 Audit timestamps currently mark proposed action, policy decision, intervention lifecycle, and execution outcome events. They do not separately persist tool execution start or internal Guardian processing start/completion. Execution-start timing must therefore be recorded for a demonstration if total tool duration is required; Guardian evaluation timing derived from proposal/policy audit timestamps is an observed event interval that includes audit persistence time, not isolated CPU time. Governance mode is not stored on audit events, so each demonstration observation must be explicitly labeled, and existing workflows cannot be assumed to be Governance OFF.
 
+## Reporting and communication boundary
+
+`CustomerReportAgent` is limited to `CustomerDataTools` and `ReportTools`. Its report-generation tool returns the report domain value; communication is intentionally outside the reporting agent boundary. `CommunicationTools` will be owned by a separate `EmailAgent` in a future phase.
+
 ## Future work
 
 Some useful next steps are:

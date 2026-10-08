@@ -25,8 +25,10 @@ class ReportToolsTest {
         WorkflowContext workflow = workflowWithRawData();
         ReportTools tools = toolsFor(workflow);
 
-        tools.generateReport(ReportTools.ReportType.ANALYTICAL);
+        ReportTools.Report report = tools.generateReport(ReportTools.ReportType.ANALYTICAL);
 
+        assertEquals(ReportTools.ReportType.ANALYTICAL, report.type());
+        assertEquals(DataClassification.ANALYTICAL, workflow.getCurrentDataClassification());
         assertEquals(DataClassification.RAW_CUSTOMER_DATA,
                 workflow.getLastTransformation().sourceClassification());
         assertEquals(DataClassification.ANALYTICAL,
@@ -39,8 +41,10 @@ class ReportToolsTest {
         WorkflowContext workflow = workflowWithRawData();
         ReportTools tools = toolsFor(workflow);
 
-        tools.generateReport(ReportTools.ReportType.REDACTED_DETAIL);
+        ReportTools.Report report = tools.generateReport(ReportTools.ReportType.REDACTED_DETAIL);
 
+        assertEquals(ReportTools.ReportType.REDACTED_DETAIL, report.type());
+        assertEquals(DataClassification.REDACTED_DETAIL, workflow.getCurrentDataClassification());
         assertEquals(DataClassification.RAW_CUSTOMER_DATA,
                 workflow.getLastTransformation().sourceClassification());
         assertEquals(DataClassification.REDACTED_DETAIL,

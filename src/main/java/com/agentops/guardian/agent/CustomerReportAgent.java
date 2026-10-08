@@ -1,6 +1,5 @@
 package com.agentops.guardian.agent;
 
-import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
@@ -24,7 +23,6 @@ public class CustomerReportAgent {
             ChatClient.Builder chatClientBuilder,
             CustomerDataTools customerDataTools,
             ReportTools reportTools,
-            CommunicationTools communicationTools,
             WorkflowContextManager workflowContextManager) throws IOException {
 
         this.workflowContextManager = workflowContextManager;
@@ -41,8 +39,7 @@ public class CustomerReportAgent {
                 .defaultSystem(systemPrompt)
                 .defaultTools(
                         customerDataTools,
-                        reportTools,
-                        communicationTools
+                        reportTools
                 )
                 .build();
     }
