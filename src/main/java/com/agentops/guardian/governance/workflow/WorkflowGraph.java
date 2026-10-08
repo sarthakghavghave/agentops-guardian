@@ -53,14 +53,22 @@ public class WorkflowGraph {
                 List.of(
                         new WorkflowNode(START_NODE_ID),
                         new WorkflowNode("CUSTOMER_DATA", WorkflowCapability.READ_CUSTOMER_DATA),
-                        new WorkflowNode("REPORT", WorkflowCapability.GENERATE_REPORT),
-                        new WorkflowNode("DELIVERY", WorkflowCapability.SEND_EMAIL)
+                        new WorkflowNode("REPORT", WorkflowCapability.GENERATE_REPORT)
                 ),
                 Set.of(
                         new WorkflowTransition(START_NODE_ID, "CUSTOMER_DATA"),
-                        new WorkflowTransition("CUSTOMER_DATA", "REPORT"),
-                        new WorkflowTransition("REPORT", "DELIVERY")
+                        new WorkflowTransition("CUSTOMER_DATA", "REPORT")
                 )
+        );
+    }
+
+    public static WorkflowGraph emailCommunicationGraph() {
+        return new WorkflowGraph(
+                List.of(
+                        new WorkflowNode(START_NODE_ID),
+                        new WorkflowNode("DELIVERY", WorkflowCapability.SEND_EMAIL)
+                ),
+                Set.of(new WorkflowTransition(START_NODE_ID, "DELIVERY"))
         );
     }
 

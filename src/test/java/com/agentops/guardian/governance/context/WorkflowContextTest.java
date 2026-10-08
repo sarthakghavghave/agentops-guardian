@@ -5,6 +5,7 @@ import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
+import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import org.junit.jupiter.api.BeforeEach;
@@ -243,8 +244,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 graph
         );
@@ -266,8 +266,20 @@ class WorkflowContextTest {
         ctx.advanceTo("REPORT", WorkflowState.REPORT_GENERATED);
         assertEquals("REPORT", ctx.getCurrentNodeId());
         assertEquals(WorkflowState.REPORT_GENERATED, ctx.getCurrentState());
+    }
 
-        ctx.advanceTo("DELIVERY", WorkflowState.DELIVERY_REQUESTED);
+    @Test
+    void shouldAdvanceEmailWorkflowThroughItsOwnCapability() {
+        WorkflowDefinition definition = new WorkflowDefinitionRegistry().get(WorkflowType.EMAIL_COMMUNICATION);
+        WorkflowContext ctx = new WorkflowContext(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send supplied report",
+                definition
+        );
+
+        ctx.advanceAfterCapability(WorkflowCapability.SEND_EMAIL);
+
         assertEquals("DELIVERY", ctx.getCurrentNodeId());
         assertEquals(WorkflowState.DELIVERY_REQUESTED, ctx.getCurrentState());
     }
@@ -279,8 +291,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 graph
         );
@@ -307,8 +318,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 graph
         );
@@ -334,8 +344,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 graph
         );
@@ -354,10 +363,6 @@ class WorkflowContextTest {
         ctx.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
         assertEquals("REPORT", ctx.getCurrentNodeId());
         assertEquals(WorkflowState.REPORT_GENERATED, ctx.getCurrentState());
-
-        ctx.advanceAfterCapability(WorkflowCapability.SEND_EMAIL);
-        assertEquals("DELIVERY", ctx.getCurrentNodeId());
-        assertEquals(WorkflowState.DELIVERY_REQUESTED, ctx.getCurrentState());
     }
 
         @Test
@@ -376,10 +381,10 @@ class WorkflowContextTest {
 
                 IllegalStateException exception = assertThrows(
                                 IllegalStateException.class,
-                                () -> ctx.validateCapabilityTransition(WorkflowCapability.SEND_EMAIL)
+                                () -> ctx.validateCapabilityTransition(WorkflowCapability.GENERATE_REPORT)
                 );
 
-                assertTrue(exception.getMessage().contains("Invalid workflow transition from START to DELIVERY"));
+                                assertTrue(exception.getMessage().contains("Invalid workflow transition from START to REPORT"));
                 assertEquals("START", ctx.getCurrentNodeId());
         }
 
@@ -421,8 +426,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 graph
         );
@@ -434,10 +438,10 @@ class WorkflowContextTest {
                 definition
         );
 
-        // Capability is in definition, but graph transition START -> SEND_EMAIL is invalid!
+        // Capability is in the definition, but START -> REPORT skips the customer-data step.
         assertThrows(
                 IllegalStateException.class,
-                () -> ctx.advanceAfterCapability(WorkflowCapability.SEND_EMAIL)
+                () -> ctx.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT)
         );
     }
 
@@ -506,8 +510,7 @@ class WorkflowContextTest {
                 WorkflowType.CUSTOMER_REPORTING,
                 Set.of(
                         WorkflowCapability.READ_CUSTOMER_DATA,
-                        WorkflowCapability.GENERATE_REPORT,
-                        WorkflowCapability.SEND_EMAIL
+                        WorkflowCapability.GENERATE_REPORT
                 ),
                 WorkflowGraph.customerReportingGraph()
         );

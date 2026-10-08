@@ -80,23 +80,33 @@ class WorkflowGraphTest {
         assertTrue(graph.containsNode("START"));
         assertTrue(graph.containsNode("CUSTOMER_DATA"));
         assertTrue(graph.containsNode("REPORT"));
-        assertTrue(graph.containsNode("DELIVERY"));
+        assertFalse(graph.containsNode("DELIVERY"));
         assertFalse(graph.containsNode("UNKNOWN"));
 
-        assertEquals(4, graph.getNodes().size());
-        assertEquals(3, graph.getTransitions().size());
+        assertEquals(3, graph.getNodes().size());
+        assertEquals(2, graph.getTransitions().size());
 
-        // Valid transitions: START -> CUSTOMER_DATA -> REPORT -> DELIVERY
+        // Valid transitions: START -> CUSTOMER_DATA -> REPORT
         assertTrue(graph.canTransition("START", "CUSTOMER_DATA"));
         assertTrue(graph.canTransition("CUSTOMER_DATA", "REPORT"));
-        assertTrue(graph.canTransition("REPORT", "DELIVERY"));
 
         // Invalid transitions
         assertFalse(graph.canTransition("START", "REPORT"));
         assertFalse(graph.canTransition("START", "DELIVERY"));
         assertFalse(graph.canTransition("CUSTOMER_DATA", "DELIVERY"));
-        assertFalse(graph.canTransition("DELIVERY", "START"));
         assertFalse(graph.canTransition("REPORT", "CUSTOMER_DATA"));
+    }
+
+    @Test
+    void shouldRepresentEmailCommunicationAsAnEmailOnlyWorkflow() {
+        WorkflowGraph graph = WorkflowGraph.emailCommunicationGraph();
+
+        assertEquals(2, graph.getNodes().size());
+        assertEquals(1, graph.getTransitions().size());
+        assertTrue(graph.canTransition("START", "DELIVERY"));
+        assertEquals(WorkflowCapability.SEND_EMAIL, graph.getNode("DELIVERY").capability());
+        assertFalse(graph.containsNode("CUSTOMER_DATA"));
+        assertFalse(graph.containsNode("REPORT"));
     }
 
     @Test

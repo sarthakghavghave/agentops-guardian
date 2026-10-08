@@ -18,10 +18,18 @@ public class WorkflowDefinitionRegistry {
                         WorkflowType.CUSTOMER_REPORTING,
                         Set.of(
                                 WorkflowCapability.READ_CUSTOMER_DATA,
-                                WorkflowCapability.GENERATE_REPORT,
-                                WorkflowCapability.SEND_EMAIL
+                                WorkflowCapability.GENERATE_REPORT
                         ),
                         WorkflowGraph.customerReportingGraph()
+                )
+        );
+
+        definitions.put(
+                WorkflowType.EMAIL_COMMUNICATION,
+                new WorkflowDefinition(
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        Set.of(WorkflowCapability.SEND_EMAIL),
+                        WorkflowGraph.emailCommunicationGraph()
                 )
         );
 

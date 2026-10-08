@@ -21,6 +21,7 @@ import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
+import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CustomerDataTools;
@@ -285,7 +286,7 @@ class GuardianToolCallingManagerTest {
         )).thenReturn(pendingIntervention("email-1", "intervention-1"));
 
         assertThrows(
-                IllegalStateException.class,
+                IllegalArgumentException.class,
                 () -> guardian.executeToolCalls(prompt, chatResponse("call-1", "sendEmail"))
         );
 
@@ -297,10 +298,9 @@ class GuardianToolCallingManagerTest {
     }
 
     @Test
-    void requiresApprovalAfterAnalyticalReportWithoutExecutingOrAdvancingEmail() {
-        configureReadAndReportDelegate();
-        when(toolCapabilityRegistry.getCapability("generateReport"))
-                .thenReturn(WorkflowCapability.GENERATE_REPORT);
+    void requiresApprovalForEmailingAnExplicitlyHandedOffAnalyticalReport() {
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
         when(interventionService.createPending(
@@ -310,10 +310,7 @@ class GuardianToolCallingManagerTest {
                 any()
         )).thenReturn(pendingIntervention("email-1", "intervention-1"));
 
-        guardian.executeToolCalls(prompt, chatResponse("read-1", "getCustomerData"));
-        guardian.executeToolCalls(prompt, chatResponse("report-1", "generateReport"));
         assertEquals(DataClassification.ANALYTICAL, workflowContext.getCurrentDataClassification());
-        assertEquals("REPORT", workflowContext.getCurrentNodeId());
 
         ApprovalRequiredException exception = assertThrows(
                 ApprovalRequiredException.class,
@@ -336,21 +333,15 @@ class GuardianToolCallingManagerTest {
                         && event.riskLevel() == RiskLevel.HIGH
                         && event.intervention() == GovernanceIntervention.REQUIRE_APPROVAL
         ));
-        verify(delegate, times(2)).executeToolCalls(any(), any());
-        assertEquals("REPORT", workflowContext.getCurrentNodeId());
-        assertEquals(WorkflowState.REPORT_GENERATED, workflowContext.getCurrentState());
+        verify(delegate, never()).executeToolCalls(any(), any());
+        assertEquals("START", workflowContext.getCurrentNodeId());
+        assertEquals(WorkflowState.STARTED, workflowContext.getCurrentState());
     }
 
     @Test
     void priorApprovalDoesNotAuthorizeAnotherToolCall() {
-        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
-        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
-        workflowContext.recordTransformation(new DataTransformation(
-                DataClassification.RAW_CUSTOMER_DATA,
-                DataClassification.ANALYTICAL,
-                "ANALYTICAL",
-                java.time.Instant.now()
-        ));
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
         when(interventionService.createPending(
@@ -380,19 +371,13 @@ class GuardianToolCallingManagerTest {
                 eq(workflowContext), eq("later-call"), eq(WorkflowCapability.SEND_EMAIL), any()
         );
         verifyNoInteractions(delegate);
-        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+        assertEquals("START", workflowContext.getCurrentNodeId());
     }
 
     @Test
     void blankProviderIdGetsGuardianIdForHighRiskIntervention() {
-        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
-        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
-        workflowContext.recordTransformation(new DataTransformation(
-                DataClassification.RAW_CUSTOMER_DATA,
-                DataClassification.ANALYTICAL,
-                "ANALYTICAL",
-                java.time.Instant.now()
-        ));
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
         when(interventionService.createPending(
@@ -415,7 +400,7 @@ class GuardianToolCallingManagerTest {
 
         assertFalse(exception.getToolCallId().isBlank());
         assertEquals("generated-id-intervention", exception.getInterventionId());
-        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+        assertEquals("START", workflowContext.getCurrentNodeId());
         verify(interventionService).createPending(
                 eq(workflowContext),
                 eq(exception.getToolCallId()),
@@ -427,15 +412,10 @@ class GuardianToolCallingManagerTest {
 
     @Test
     void explicitRawDataPolicyBlockRemainsAuthoritativeBeforeRiskIntervention() {
-        when(delegate.executeToolCalls(any(), any())).thenAnswer(invocation -> {
-            ChatResponse response = invocation.getArgument(1);
-            String callId = response.getResult().getOutput().getToolCalls().getFirst().id();
-            workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
-            return successfulResult(callId);
-        });
+        useEmailWorkflowContext();
+        workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
-        guardian.executeToolCalls(prompt, chatResponse("read-raw", "getCustomerData"));
 
         assertEquals(RiskLevel.CRITICAL,
                 new RiskEvaluator().assess(workflowContext, WorkflowCapability.SEND_EMAIL).level());
@@ -466,14 +446,13 @@ class GuardianToolCallingManagerTest {
                 event.eventType() == AuditEventType.RISK_ASSESSMENT
                         && "email-raw".equals(event.toolCallId())
         ));
-        verify(delegate, times(1)).executeToolCalls(any(), any());
-        assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+        verifyNoInteractions(delegate);
+        assertEquals("START", workflowContext.getCurrentNodeId());
     }
 
     @Test
     void criticalRiskBlocksEvenWhenPolicyAllows() {
-        workflowContext.advanceAfterCapability(WorkflowCapability.READ_CUSTOMER_DATA);
-        workflowContext.advanceAfterCapability(WorkflowCapability.GENERATE_REPORT);
+        useEmailWorkflowContext();
         workflowContext.markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
         when(toolCapabilityRegistry.getCapability("sendEmail"))
                 .thenReturn(WorkflowCapability.SEND_EMAIL);
@@ -496,7 +475,41 @@ class GuardianToolCallingManagerTest {
                         && event.riskReason().contains("raw customer data")
         ));
         verifyNoInteractions(delegate);
-        assertEquals("REPORT", workflowContext.getCurrentNodeId());
+        assertEquals("START", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void emailCommunicationWorkflowRequiresGuardianApprovalForEmailExecution() {
+        useEmailWorkflowContext();
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(interventionService.createPending(
+                eq(workflowContext),
+                eq("email-success"),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        )).thenReturn(pendingIntervention("email-success", "email-intervention"));
+
+        ApprovalRequiredException exception = assertThrows(
+                ApprovalRequiredException.class,
+                () -> guardian.executeToolCalls(prompt, chatResponse("email-success", "sendEmail"))
+        );
+
+        assertEquals("email-intervention", exception.getInterventionId());
+        verify(policyEngine).evaluate(eq(workflowContext), argThat(event -> "sendEmail".equals(event.toolName())));
+        verify(interventionService).createPending(
+                eq(workflowContext),
+                eq("email-success"),
+                eq(WorkflowCapability.SEND_EMAIL),
+                any()
+        );
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && "sendEmail".equals(event.toolName())
+        ));
+        verifyNoInteractions(delegate);
+        assertEquals(WorkflowType.EMAIL_COMMUNICATION, workflowContext.getWorkflowType());
+        assertEquals("START", workflowContext.getCurrentNodeId());
     }
 
     @Test
@@ -575,6 +588,35 @@ class GuardianToolCallingManagerTest {
         return ToolExecutionResult.builder()
                 .conversationHistory(List.of(responseMessage))
                 .build();
+    }
+
+    private void useEmailWorkflowContext() {
+        WorkflowDefinition definition = new WorkflowDefinitionRegistry().get(WorkflowType.EMAIL_COMMUNICATION);
+        workflowContext = new WorkflowContext(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send explicitly supplied report",
+                definition
+        );
+        when(workflowContextManager.current()).thenReturn(workflowContext);
+        guardian = new GuardianToolCallingManager(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator(),
+                interventionService
+        );
+    }
+
+    private void markAnalyticalReportHandoff() {
+        workflowContext.recordTransformation(new DataTransformation(
+                DataClassification.RAW_CUSTOMER_DATA,
+                DataClassification.ANALYTICAL,
+                "ANALYTICAL",
+                java.time.Instant.now()
+        ));
     }
 
         private void configureReadAndReportDelegate() {

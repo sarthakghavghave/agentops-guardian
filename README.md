@@ -20,7 +20,7 @@ This project adds a guardrail layer so that tool calls are checked before execut
 The project follows a simple layered design:
 
 1. Agent layer
-   - `CustomerReportAgent` and `CustomerSupportAgent` create the AI chat client and attach tools.
+   - `CustomerReportAgent`, `CustomerSupportAgent`, and `EmailAgent` create the AI chat client and attach their scoped tools.
    - The agents start a workflow context before a request and clear it after completion.
 
 2. Governance layer
@@ -126,7 +126,9 @@ Audit timestamps currently mark proposed action, policy decision, intervention l
 
 ## Reporting and communication boundary
 
-`CustomerReportAgent` is limited to `CustomerDataTools` and `ReportTools`. Its report-generation tool returns the report domain value; communication is intentionally outside the reporting agent boundary. `CommunicationTools` will be owned by a separate `EmailAgent` in a future phase.
+`CustomerReportAgent` is limited to `CustomerDataTools` and `ReportTools`. It produces a `ReportTools.Report` domain value that is explicitly handed in-process to `EmailAgent`; there is no implicit agent-to-agent tool call or report persistence.
+
+`EmailAgent` is limited to `CommunicationTools` and receives the report and recipient as input. Its tool execution continues through Guardian's normal workflow, policy, risk, intervention, and audit path. The distinct `EMAIL_COMMUNICATION` workflow identity grants only the `SEND_EMAIL` capability, while `CUSTOMER_REPORTING` grants only customer-data retrieval and report generation. `CommunicationTools` currently prints simulated outbound email output; real email delivery is not part of this phase.
 
 ## Future work
 
