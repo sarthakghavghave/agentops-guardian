@@ -116,10 +116,19 @@ It already includes:
 
 This is not a full production governance platform yet. It is a strong foundation for a controlled AI workflow system with room for more production hardening.
 
+## Evaluation foundation
+
+The `governance.evaluation` package supports manually performed, real demonstration scenarios. It records and derives evidence for the operational effect of AgentOps Guardian; it does not execute scenarios, simulate attacks, change governance decisions, persist synthetic results, or expose an evaluation API.
+
+The primary quantitative comparison is an explicitly paired Governance ON versus Governance OFF run: total observed tool-execution duration, duration difference, and overhead percentage when both durations exist and the OFF duration is non-zero. Guardian evaluation and human-intervention durations are derived from available timestamps. Safety and outcome changes are reported from actual persisted audit/intervention evidence; a manually observed outcome is only used when persisted evidence cannot establish one. Missing evidence produces `UNKNOWN` outcomes or unavailable timing values; no baseline is fabricated from historical runs, and no prevention statistics or superficial aggregate counts are produced.
+
+Audit timestamps currently mark proposed action, policy decision, intervention lifecycle, and execution outcome events. They do not separately persist tool execution start or internal Guardian processing start/completion. Execution-start timing must therefore be recorded for a demonstration if total tool duration is required; Guardian evaluation timing derived from proposal/policy audit timestamps is an observed event interval that includes audit persistence time, not isolated CPU time. Governance mode is not stored on audit events, so each demonstration observation must be explicitly labeled, and existing workflows cannot be assumed to be Governance OFF.
+
 ## Future work
 
 Some useful next steps are:
 
+- persist evaluation-run provenance and explicitly verified governance mode if durable comparison records are needed
 - stronger RBAC and auth around approval operations
 - better persistence and reporting for interventions and audit trails
 - notification flow for pending approvals
