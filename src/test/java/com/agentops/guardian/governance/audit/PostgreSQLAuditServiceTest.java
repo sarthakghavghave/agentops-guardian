@@ -10,6 +10,9 @@ import com.agentops.guardian.governance.risk.RiskFactorType;
 import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
+import com.agentops.guardian.governance.audit.live.GovernanceAuditEventPersisted;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -19,14 +22,22 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
 
 class PostgreSQLAuditServiceTest {
 
     @Test
     void mapsAuditEventFieldsAndSavesEntity() {
         AuditEventRepository repository = mock(AuditEventRepository.class);
-        PostgreSQLAuditService service = new PostgreSQLAuditService(repository);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        when(repository.save(any(AuditEventEntity.class))).thenAnswer(invocation -> {
+            AuditEventEntity entity = invocation.getArgument(0);
+            ReflectionTestUtils.setField(entity, "id", 101L);
+            return entity;
+        });
+        PostgreSQLAuditService service = new PostgreSQLAuditService(repository, eventPublisher);
         Instant timestamp = Instant.parse("2026-09-25T10:15:30Z");
         AuditEvent event = new AuditEvent(
                 "workflow-1",
@@ -76,12 +87,19 @@ class PostgreSQLAuditServiceTest {
         assertNull(entity.getClassificationBefore());
         assertNull(entity.getClassificationAfter());
         assertNull(entity.getTransformationType());
+        verify(eventPublisher).publishEvent(any(GovernanceAuditEventPersisted.class));
     }
 
     @Test
     void mapsRiskInterventionMetadataToEntity() {
         AuditEventRepository repository = mock(AuditEventRepository.class);
-        PostgreSQLAuditService service = new PostgreSQLAuditService(repository);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        when(repository.save(any(AuditEventEntity.class))).thenAnswer(invocation -> {
+            AuditEventEntity entity = invocation.getArgument(0);
+            ReflectionTestUtils.setField(entity, "id", 102L);
+            return entity;
+        });
+        PostgreSQLAuditService service = new PostgreSQLAuditService(repository, eventPublisher);
         RiskAssessment assessment = new RiskAssessment(
                 RiskLevel.HIGH,
                 List.of(new RiskFactor(RiskFactorType.EXTERNAL_SIDE_EFFECT, "External communication.")),
@@ -108,5 +126,24 @@ class PostgreSQLAuditServiceTest {
         assertEquals(GovernanceIntervention.REQUIRE_APPROVAL, entity.getIntervention());
         assertEquals("External communication requires approval.", entity.getRiskReason());
         assertEquals(null, entity.getPolicyDecision());
+    }
+
+    @Test
+    void doesNotPublishWhenPersistenceFails() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        when(repository.save(any(AuditEventEntity.class)))
+                .thenThrow(new IllegalStateException("Persistence failed."));
+        PostgreSQLAuditService service = new PostgreSQLAuditService(repository, eventPublisher);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class,
+                () -> service.record(AuditEvent.proposedAction(
+                        "workflow-failed", "Agent", WorkflowType.CUSTOMER_REPORTING,
+                        "call-1", "sendEmail", WorkflowCapability.SEND_EMAIL, 1
+                ))
+        );
+
+        org.mockito.Mockito.verifyNoInteractions(eventPublisher);
     }
 }
