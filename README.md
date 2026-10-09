@@ -47,6 +47,11 @@ The project follows a simple layered design:
    - Tool classes wrap data access and external actions like email and reporting.
    - Dataset import services load sample data from CSV files for local testing.
 
+7. Request coordination
+   - `AgentCoordinator` uses the configured Gemini chat client only to classify user intent.
+   - It dispatches report requests to `CustomerReportAgent`; it dispatches email requests to `EmailAgent` only when an explicit report handoff and recipient are supplied.
+   - The coordinator has no tools and never executes model-generated methods or code.
+
 ## Project structure
 
 ```text
@@ -65,6 +70,7 @@ agentops-guardian/
 │   │   │   └── com/agentops/guardian/
 │   │   │       ├── agent/
 │   │   │       ├── controller/
+│   │   │       ├── coordinator/
 │   │   │       ├── domain/
 │   │   │       ├── governance/
 │   │   │       ├── ingestion/
@@ -129,6 +135,8 @@ Audit timestamps currently mark proposed action, policy decision, intervention l
 `CustomerReportAgent` is limited to `CustomerDataTools` and `ReportTools`. It produces a `ReportTools.Report` domain value that is explicitly handed in-process to `EmailAgent`; there is no implicit agent-to-agent tool call or report persistence.
 
 `EmailAgent` is limited to `CommunicationTools` and receives the report and recipient as input. Its tool execution continues through Guardian's normal workflow, policy, risk, intervention, and audit path. The distinct `EMAIL_COMMUNICATION` workflow identity grants only the `SEND_EMAIL` capability, while `CUSTOMER_REPORTING` grants only customer-data retrieval and report generation. `CommunicationTools` currently prints simulated outbound email output; real email delivery is not part of this phase.
+
+`POST /api/agent-coordinator/run` accepts a JSON body with a required `message` and optional `recipient` and `report` handoff fields. Email intent without both the explicit report and recipient returns a clarification instead of dispatching. Report-to-email agent handoff and conversation memory are future phases.
 
 ## Future work
 
