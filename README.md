@@ -136,12 +136,16 @@ Audit timestamps currently mark proposed action, policy decision, intervention l
 
 `EmailAgent` is limited to `CommunicationTools` and receives the report and recipient as input. Its tool execution continues through Guardian's normal workflow, policy, risk, intervention, and audit path. The distinct `EMAIL_COMMUNICATION` workflow identity grants only the `SEND_EMAIL` capability, while `CUSTOMER_REPORTING` grants only customer-data retrieval and report generation. `CommunicationTools` currently prints simulated outbound email output; real email delivery is not part of this phase.
 
-`POST /api/agent-coordinator/run` accepts a JSON body with a required `message` and optional `recipient` and `report` handoff fields. Email intent without both the explicit report and recipient returns a clarification instead of dispatching. Report-to-email agent handoff and conversation memory are future phases.
+`POST /api/agent-coordinator/run` accepts a JSON body with a required `message`, optional `conversationId`, `recipient`, and `report` handoff fields. The first request creates an in-memory conversation and returns its UUID; later requests may send that UUID to continue. Conversation memory uses a 12-message sliding window, expires after 30 minutes idle, and is capped at 500 active conversations per application instance. Unknown IDs return 404, expired IDs return 410, and malformed IDs return 400. Memory is process-local and is lost on restart.
+
+Only bounded user turns and safe coordinator clarification/general-response text are retained. Email addresses and phone-like strings in those turns are redacted; structured report handoffs, report-agent results, and email-agent results are not stored in chat history. When a supplied report needs a recipient, its payload is held separately in that conversation's short-lived in-memory pending state so the recipient can be supplied in a follow-up; it is cleared after successful email-agent execution or conversation expiry/eviction. A follow-up report request receives prior user messages solely to resolve references, with the current request taking precedence. Conversation history is not execution state or evidence that an action succeeded, and a historical mention of a generated report does not authorize an email. Report-to-email agent handoff and persistent/shared agent session context remain out of scope.
 
 ## Future work
 
 Some useful next steps are:
 
+- persistent conversation storage and shared agent session context, if required
+- explicit report-to-email handoff orchestration
 - persist evaluation-run provenance and explicitly verified governance mode if durable comparison records are needed
 - stronger RBAC and auth around approval operations
 - better persistence and reporting for interventions and audit trails

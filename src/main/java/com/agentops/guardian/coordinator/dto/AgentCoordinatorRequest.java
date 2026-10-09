@@ -16,8 +16,14 @@ public record AgentCoordinatorRequest(
         @Size(max = 320)
         String recipient,
         @Valid
-        ReportHandoff report
+        ReportHandoff report,
+        @Size(max = 36)
+        String conversationId
 ) {
+    public AgentCoordinatorRequest(String message, String recipient, ReportHandoff report) {
+        this(message, recipient, report, null);
+    }
+
     public record ReportHandoff(
             @NotNull ReportType type,
             boolean redacted,
