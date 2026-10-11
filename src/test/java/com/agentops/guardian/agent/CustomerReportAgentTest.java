@@ -3,6 +3,11 @@ package com.agentops.guardian.agent;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.workflow.WorkflowType;
+import com.agentops.guardian.coordinator.ConversationMemory;
+import com.agentops.guardian.coordinator.context.Artifact;
+import com.agentops.guardian.coordinator.context.ArtifactType;
+import com.agentops.guardian.coordinator.context.ExecutionStatus;
+import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ReportTools;
 import org.junit.jupiter.api.Test;
@@ -11,9 +16,12 @@ import org.mockito.InOrder;
 import org.springframework.ai.chat.client.ChatClient;
 
 import java.io.IOException;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -103,6 +111,53 @@ class CustomerReportAgentTest {
         lifecycle.verify(manager).clear();
         verify(manager, never()).complete();
         verify(manager, never()).block();
+    }
+
+    @Test
+    void registersOnlyReportToolOutputAfterVerifiedGeneration() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        mockChatClient(builder, "Assistant summary");
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        ReportTools reportTools = mock(ReportTools.class);
+        when(reportTools.executionResults()).thenReturn(java.util.List.of(
+                new ReportTools.Report(ReportTools.ReportType.ANALYTICAL, false, 3, "Verified report output")
+        ));
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        CustomerReportAgent agent = new CustomerReportAgent(
+                builder, mock(CustomerDataTools.class), reportTools, manager, memory
+        );
+
+        agent.execute(conversationId, new AgentCoordinatorRequest("Generate the report", null, null));
+
+        Artifact report = memory.getLatestArtifact(conversationId, ArtifactType.REPORT).orElseThrow();
+        assertEquals("Verified report output", report.content());
+        assertEquals(Artifact.GENERATED_PROVENANCE, report.metadata().get(Artifact.PROVENANCE_KEY));
+        assertEquals(ExecutionStatus.SUCCESS, memory.getLatestExecution(conversationId).orElseThrow().status());
+        verify(reportTools).beginExecution();
+        verify(reportTools).clearExecutionResult();
+    }
+
+    @Test
+    void doesNotRegisterReportWhenToolExecutionIsUnconfirmed() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        mockChatClient(builder, "Fabricated-looking assistant report");
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        ReportTools reportTools = mock(ReportTools.class);
+        when(reportTools.executionResults()).thenReturn(java.util.List.of());
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        CustomerReportAgent agent = new CustomerReportAgent(
+                builder, mock(CustomerDataTools.class), reportTools, manager, memory
+        );
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> agent.execute(conversationId, new AgentCoordinatorRequest("Generate a report", null, null))
+        );
+
+        assertTrue(memory.getLatestArtifact(conversationId, ArtifactType.REPORT).isEmpty());
+        assertEquals(ExecutionStatus.FAILED, memory.getLatestExecution(conversationId).orElseThrow().status());
     }
 
     private ChatClient mockChatClient(ChatClient.Builder builder, String response) {

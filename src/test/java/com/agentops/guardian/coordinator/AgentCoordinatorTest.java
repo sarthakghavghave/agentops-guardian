@@ -2,6 +2,10 @@ package com.agentops.guardian.coordinator;
 
 import com.agentops.guardian.agent.CustomerReportAgent;
 import com.agentops.guardian.agent.EmailAgent;
+import com.agentops.guardian.coordinator.agent.AgentResult;
+import com.agentops.guardian.coordinator.context.ArtifactType;
+import com.agentops.guardian.coordinator.context.ExecutionRecord;
+import com.agentops.guardian.coordinator.context.ExecutionStatus;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
 import com.agentops.guardian.tool.ReportTools;
@@ -10,406 +14,195 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class AgentCoordinatorTest {
 
     @Test
-    void dispatchesReportIntentToReportAgentWithOriginalMessage() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.REPORT_REQUEST, null, null));
-        when(fixture.reportAgent.generateReport("Generate a customer report for Boston"))
-                .thenReturn("Report generated.");
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Generate a customer report for Boston", null, null)
+    void reportArtifactCanBeHandedToEmailAgentInSameConversation() throws IOException {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
+        when(fixture.reportAgent.generateReport(anyString())).thenReturn("Report summary");
+        fixture.verifiedGeneratedReport("Report data from tool");
+        AgentCoordinatorResponse reportResponse = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Generate sales report", null, null)
         );
 
-        assertEquals(AgentCoordinator.IntentAction.REPORT_REQUEST, response.action());
-        assertEquals("Report generated.", response.response());
-        assertFalse(response.clarificationRequired());
-        assertNotNull(response.conversationId());
-        assertTrue(fixture.memory.history(java.util.UUID.fromString(response.conversationId()))
-                .stream().noneMatch(message -> message.getText().contains("Report generated.")));
-        verify(fixture.reportAgent).generateReport("Generate a customer report for Boston");
-        verifyNoInteractions(fixture.emailAgent);
+        fixture.decision(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+                .when(fixture.emailAgent).execute(any(), any());
+        AgentCoordinatorResponse emailResponse = fixture.coordinator.handle(new AgentCoordinatorRequest(
+                "Please email that report to finance@example.com",
+                null,
+                null,
+                reportResponse.conversationId()
+        ));
+
+        assertFalse(emailResponse.clarificationRequired());
+        ArgumentCaptor<UUID> conversation = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<AgentCoordinatorRequest> emailRequest = ArgumentCaptor.forClass(AgentCoordinatorRequest.class);
+        verify(fixture.emailAgent).execute(conversation.capture(), emailRequest.capture());
+        assertEquals(UUID.fromString(reportResponse.conversationId()), conversation.getValue());
+        assertEquals("Please email that report to finance@example.com", emailRequest.getValue().message());
+        assertTrue(fixture.memory.getLatestArtifact(conversation.getValue(), ArtifactType.REPORT).isPresent());
     }
 
     @Test
-    void dispatchesEmailIntentWithOnlyExplicitlySuppliedReportAndRecipient() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                ReportTools.ReportType.REDACTED_DETAIL,
-                true,
-                2,
-                "Customer segment report"
-        );
-        when(fixture.emailAgent.emailReport(any(ReportTools.Report.class), eq("recipient@example.com")))
-                .thenReturn("Communication tool confirmed the email.");
+    void routesEmailToEmailAgentWithoutCoordinatorEmailIntentClassification() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+                .when(fixture.emailAgent).execute(any(), any());
 
         AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email this report", "recipient@example.com", handoff)
+                new AgentCoordinatorRequest("Yes, send the invitation", "team@example.com", null)
         );
 
         assertEquals(AgentCoordinator.IntentAction.EMAIL_REQUEST, response.action());
-        assertEquals("Communication tool confirmed the email.", response.response());
         assertFalse(response.clarificationRequired());
-        ArgumentCaptor<ReportTools.Report> report = ArgumentCaptor.forClass(ReportTools.Report.class);
-        verify(fixture.emailAgent).emailReport(report.capture(), eq("recipient@example.com"));
-        assertEquals(
-                new ReportTools.Report(
-                        ReportTools.ReportType.REDACTED_DETAIL,
-                        true,
-                        2,
-                        "Customer segment report"
-                ),
-                report.getValue()
-        );
-        List<Message> retained = fixture.memory.history(java.util.UUID.fromString(response.conversationId()));
-        assertTrue(retained.stream().noneMatch(message ->
-                message.getText().contains("Customer segment report")
-                        || message.getText().contains("recipient@example.com")
-                        || message.getText().contains("Communication tool confirmed")
-        ));
+        verify(fixture.emailAgent).execute(any(), any());
         verifyNoInteractions(fixture.reportAgent);
     }
 
     @Test
-    void asksForEmailDetailsInsteadOfInventingThem() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
+    void routesEmailConfirmationWithSharedConversationHistoryToEmailAgent() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        fixture.memory.recordTurn(conversationId, "Please send the agenda.", "Should I send it now?");
+        doReturn(AgentResult.clarification("Please provide the recipient."))
+                .when(fixture.emailAgent).execute(any(), any());
 
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email the report", null, null)
-        );
+        fixture.coordinator.handle(new AgentCoordinatorRequest("Yes", null, null, conversationId.toString()));
 
-        assertEquals(AgentCoordinator.IntentAction.CLARIFICATION_REQUIRED, response.action());
-        assertTrue(response.clarificationRequired());
-        assertTrue(response.response().contains("report"));
-        assertTrue(response.response().contains("recipient"));
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void asksOnlyForMissingEmailRecipient() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                ReportTools.ReportType.ANALYTICAL,
-                false,
-                0,
-                "Supplied report"
-        );
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email the report", null, handoff)
-        );
-
-        assertEquals(AgentCoordinator.IntentAction.CLARIFICATION_REQUIRED, response.action());
-        assertTrue(response.response().contains("email address"));
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void recipientAnswerContinuesPendingEmailClarificationInSameConversation() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                ReportTools.ReportType.ANALYTICAL,
-                false,
-                2,
-                "Quarterly revenue summary"
-        );
-        AgentCoordinatorResponse clarification = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email this supplied report", null, handoff)
-        );
-        assertTrue(clarification.clarificationRequired());
-
-        fixture.decision(decision(AgentCoordinator.IntentAction.GENERAL_RESPONSE, null, null));
-        when(fixture.emailAgent.emailReport(any(ReportTools.Report.class), eq("recipient@example.com")))
-                .thenReturn("Communication tool confirmed success.");
-        AgentCoordinatorResponse followUp = fixture.coordinator.handle(
-                new AgentCoordinatorRequest(
-                        "Please send it to recipient@example.com",
-                        null,
-                        null,
-                        clarification.conversationId()
-                )
-        );
-
-        assertEquals(AgentCoordinator.IntentAction.EMAIL_REQUEST, followUp.action());
-        assertFalse(followUp.clarificationRequired());
-        assertEquals(clarification.conversationId(), followUp.conversationId());
-        ArgumentCaptor<ReportTools.Report> report = ArgumentCaptor.forClass(ReportTools.Report.class);
-        verify(fixture.emailAgent).emailReport(report.capture(), eq("recipient@example.com"));
-        assertEquals("Quarterly revenue summary", report.getValue().content());
-        assertNull(fixture.memory.pendingEmailReport(
-                java.util.UUID.fromString(clarification.conversationId())
-        ));
-        assertTrue(fixture.memory.history(java.util.UUID.fromString(clarification.conversationId()))
-                .stream().noneMatch(message -> message.getText().contains("recipient@example.com")));
-    }
-
-    @Test
-    void asksForIncompleteReportBeforeEmailDispatch() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                null,
-                false,
-                0,
-                " "
-        );
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email the report", "recipient@example.com", handoff)
-        );
-
-        assertTrue(response.clarificationRequired());
-        assertTrue(response.response().contains("report type"));
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void returnsGeneralResponseWithoutInvokingAgents() {
-        Fixture fixture = new Fixture(decision(
-                AgentCoordinator.IntentAction.GENERAL_RESPONSE,
-                "I can help with a customer report or an email handoff.",
-                null
-        ));
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("What can you do?", null, null)
-        );
-
-        assertEquals(AgentCoordinator.IntentAction.GENERAL_RESPONSE, response.action());
-        assertEquals(
-                "I can help generate a customer report or email a report that you explicitly provide.",
-                response.response()
-        );
-        assertTrue(fixture.memory.history(java.util.UUID.fromString(response.conversationId()))
-                .stream().anyMatch(message ->
-                        message.getText().contains("I can help generate a customer report")
-                ));
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void returnsTargetedClarificationForAmbiguousIntent() {
-        Fixture fixture = new Fixture(decision(
-                AgentCoordinator.IntentAction.CLARIFICATION_REQUIRED,
-                null,
-                "Would you like me to generate a report or email an existing report?"
-        ));
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Can you take care of that?", null, null)
-        );
-
-        assertTrue(response.clarificationRequired());
-        assertEquals(
-                "Would you like me to generate a report or email an existing report?",
-                response.response()
-        );
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void followUpClarificationTurnReceivesEarlierConversationHistory() {
-        Fixture fixture = new Fixture(decision(
-                AgentCoordinator.IntentAction.CLARIFICATION_REQUIRED,
-                null,
-                "Which city should the report cover?"
-        ));
-
-        AgentCoordinatorResponse first = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Generate a sales report for Boston", null, null)
-        );
-        fixture.decision(decision(AgentCoordinator.IntentAction.REPORT_REQUEST, null, null));
-        when(fixture.reportAgent.generateReport(anyString())).thenReturn("Report generated.");
-        AgentCoordinatorResponse second = fixture.coordinator.handle(
-                new AgentCoordinatorRequest(
-                        "Can you make that report for Toronto instead?",
-                        null,
-                        null,
-                        first.conversationId()
-                )
-        );
-
-        assertEquals(first.conversationId(), second.conversationId());
         ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
-        verify(fixture.chatClient, times(2)).prompt();
-        verify(fixture.requestSpec, times(2)).messages(messages.capture());
-        assertEquals(1, messages.getAllValues().getFirst().size());
-        List<Message> followUpHistory = messages.getAllValues().get(1);
-        assertEquals(3, followUpHistory.size());
-        assertTrue(followUpHistory.get(0).getText().contains("Generate a sales report for Boston"));
-        assertTrue(followUpHistory.get(1).getText().contains("Which city should the report cover?"));
-        assertTrue(followUpHistory.get(2).getText().contains("Can you make that report for Toronto instead?"));
-        ArgumentCaptor<String> reportRequest = ArgumentCaptor.forClass(String.class);
-        verify(fixture.reportAgent).generateReport(reportRequest.capture());
-        assertTrue(reportRequest.getValue().contains("Generate a sales report for Boston"));
-        assertTrue(reportRequest.getValue().contains("Can you make that report for Toronto instead?"));
+        verify(fixture.requestSpec).messages(messages.capture());
+        assertTrue(messages.getValue().stream().anyMatch(message ->
+                message.getText().contains("Should I send it now?")));
+        assertTrue(messages.getValue().stream().anyMatch(message -> message.getText().equals("Yes")));
+        verify(fixture.emailAgent).execute(eq(conversationId), any());
     }
 
     @Test
-    void newConversationDoesNotReceiveHistoryFromAnotherConversation() {
-        Fixture fixture = new Fixture(decision(
+    void preservesClarificationTurnsInSharedConversationHistory() {
+        String question = "Which date range should I use?";
+        Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.CLARIFICATION_REQUIRED,
                 null,
-                "Which city?"
+                question
         ));
 
-        AgentCoordinatorResponse first = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Generate a customer report", null, null)
-        );
-        AgentCoordinatorResponse second = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("What can you do?", null, null)
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Generate a report", null, null)
         );
 
-        assertNotEquals(first.conversationId(), second.conversationId());
-        ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
-        verify(fixture.requestSpec, times(2)).messages(messages.capture());
-        List<Message> otherConversationMessages = messages.getAllValues().get(1);
-        assertEquals(1, otherConversationMessages.size());
-        assertTrue(otherConversationMessages.getFirst().getText().contains("What can you do?"));
+        assertTrue(response.clarificationRequired());
+        assertEquals(question, response.response());
+        List<Message> history = fixture.memory.history(UUID.fromString(response.conversationId()));
+        assertTrue(history.stream().anyMatch(message -> message.getText().equals("Generate a report")));
+        assertTrue(history.stream().anyMatch(message -> message.getText().equals(question)));
     }
 
     @Test
-    void pendingReportCannotLeakIntoANewConversation() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                ReportTools.ReportType.ANALYTICAL,
-                false,
-                1,
-                "Conversation-specific report"
-        );
-        AgentCoordinatorResponse first = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Email this report", null, handoff)
+    void rejectsAgentIncompatibleWithRoutingAction() {
+        Fixture emailToReport = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null, "CUSTOMER_REPORT"
+        ));
+        assertThrows(IllegalArgumentException.class, () -> emailToReport.coordinator.handle(
+                new AgentCoordinatorRequest("Email the agenda", "team@example.com", null)
+        ));
+        verifyNoInteractions(emailToReport.emailAgent, emailToReport.reportAgent);
+
+        Fixture reportToEmail = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.REPORT_REQUEST, null, null, "EMAIL"
+        ));
+        assertThrows(IllegalArgumentException.class, () -> reportToEmail.coordinator.handle(
+                new AgentCoordinatorRequest("Generate a report", null, null)
+        ));
+        verifyNoInteractions(reportToEmail.emailAgent, reportToEmail.reportAgent);
+    }
+
+    @Test
+    void everyAgentResultStatusIsHandledWithoutFalseSuccess() {
+        AgentCoordinatorRequest request = new AgentCoordinatorRequest("Send an invitation", "team@example.com", null);
+
+        Fixture success = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.success("Accepted by simulated communication tool."))
+                .when(success.emailAgent).execute(any(), any());
+        assertFalse(success.coordinator.handle(request).clarificationRequired());
+
+        Fixture clarification = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.clarification("Should I send the invitation?"))
+                .when(clarification.emailAgent).execute(any(), any());
+        AgentCoordinatorResponse clarificationResponse = clarification.coordinator.handle(request);
+        assertTrue(clarificationResponse.clarificationRequired());
+        assertEquals("Should I send the invitation?", clarificationResponse.response());
+
+        Fixture failure = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.failure("Email operation failed"))
+                .when(failure.emailAgent).execute(any(), any());
+        assertThrows(IllegalStateException.class, () -> failure.coordinator.handle(request));
+
+        Fixture dependency = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.needsDependency("CustomerReportAgent", "A report is needed"))
+                .when(dependency.emailAgent).execute(any(), any());
+        assertTrue(assertThrows(IllegalStateException.class, () -> dependency.coordinator.handle(request))
+                .getMessage().contains("not supported"));
+
+        Fixture emptySuccess = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        doReturn(AgentResult.success(" "))
+                .when(emptySuccess.emailAgent).execute(any(), any());
+        assertThrows(IllegalStateException.class, () -> emptySuccess.coordinator.handle(request));
+    }
+
+    @Test
+    void successAndClarificationAssistantTurnsAreStoredButIsolated() {
+        Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.GENERAL_RESPONSE, "How can I help?", null
+        ));
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Hello", null, null)
         );
 
-        AgentCoordinatorResponse second = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Send it to recipient@example.com", null, null)
-        );
+        UUID conversationId = UUID.fromString(response.conversationId());
+        List<Message> history = fixture.memory.history(conversationId);
+        assertTrue(history.stream().anyMatch(message -> message.getText().equals("Hello")));
+        assertTrue(history.stream().anyMatch(message -> message.getText().equals("How can I help?")));
+        assertTrue(fixture.memory.history(fixture.memory.open(null)).isEmpty());
+    }
 
-        assertTrue(first.clarificationRequired());
-        assertTrue(second.clarificationRequired());
-        assertTrue(second.response().contains("report"));
+    @Test
+    void validatesExplicitRecipientBeforeRouting() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        assertThrows(IllegalArgumentException.class, () -> fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Send the invitation", "not-an-email", null)
+        ));
         verifyNoInteractions(fixture.emailAgent);
     }
 
     @Test
-    void priorReportResultAloneCannotAuthorizeEmailOrBeClaimedAsSent() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.REPORT_REQUEST, null, null));
-        when(fixture.reportAgent.generateReport("Generate a sales report for Boston"))
-                .thenReturn("A report was generated.");
-        AgentCoordinatorResponse reportResponse = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Generate a sales report for Boston", null, null)
-        );
+    void failedReportExecutionDoesNotRegisterArtifact() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
+        when(fixture.reportAgent.generateReport(anyString())).thenThrow(new IllegalStateException("Report failed."));
+        UUID conversationId = fixture.memory.open(null);
 
-        fixture.decision(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorResponse emailFollowUp = fixture.coordinator.handle(
-                new AgentCoordinatorRequest(
-                        "Email the report you generated earlier to recipient@example.com",
-                        null,
-                        null,
-                        reportResponse.conversationId()
-                )
-        );
-
-        assertTrue(emailFollowUp.clarificationRequired());
-        assertTrue(emailFollowUp.response().contains("report"));
-        assertFalse(emailFollowUp.response().toLowerCase(java.util.Locale.ROOT).contains("sent"));
-        verifyNoInteractions(fixture.emailAgent);
-        assertTrue(fixture.memory.history(java.util.UUID.fromString(reportResponse.conversationId()))
-                .stream().noneMatch(message -> message.getText().contains("A report was generated.")));
-    }
-
-    @Test
-    void ignoresModelGeneralResponseThatClaimsAnActionSucceeded() {
-        Fixture fixture = new Fixture(decision(
-                AgentCoordinator.IntentAction.GENERAL_RESPONSE,
-                "The email was sent and the report was generated.",
-                null
+        assertThrows(IllegalStateException.class, () -> fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Generate a report", null, null, conversationId.toString())
         ));
-
-        AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Did you send the email?", null, null)
-        );
-
-        assertFalse(response.response().toLowerCase(java.util.Locale.ROOT).contains("sent"));
-        assertFalse(response.response().toLowerCase(java.util.Locale.ROOT).contains("generated"));
+        assertTrue(fixture.memory.getLatestArtifact(conversationId, ArtifactType.REPORT).isEmpty());
+        Optional<ExecutionRecord> execution = fixture.memory.getLatestExecution(conversationId);
+        assertTrue(execution.isPresent());
+        assertEquals(ExecutionStatus.FAILED, execution.get().status());
     }
 
-    @Test
-    void rejectsMissingModelDecision() {
-        Fixture fixture = new Fixture(null);
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> fixture.coordinator.handle(new AgentCoordinatorRequest("Do something", null, null))
-        );
-
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-    }
-
-    @Test
-    void doesNotReturnSuccessWhenAnAgentFailsOrReturnsNoResult() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.REPORT_REQUEST, null, null));
-        when(fixture.reportAgent.generateReport("Generate a report"))
-                .thenThrow(new IllegalStateException("Report execution failed."));
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> fixture.coordinator.handle(new AgentCoordinatorRequest("Generate a report", null, null))
-        );
-
-        doReturn(" ").when(fixture.reportAgent).generateReport("Generate a report");
-        assertThrows(
-                IllegalStateException.class,
-                () -> fixture.coordinator.handle(new AgentCoordinatorRequest("Generate a report", null, null))
-        );
-    }
-
-    @Test
-    void propagatesEmailAgentFailureWithoutReturningSuccess() {
-        Fixture fixture = new Fixture(decision(AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null));
-        AgentCoordinatorRequest.ReportHandoff handoff = new AgentCoordinatorRequest.ReportHandoff(
-                ReportTools.ReportType.ANALYTICAL,
-                false,
-                1,
-                "Supplied report"
-        );
-        when(fixture.emailAgent.emailReport(any(ReportTools.Report.class), anyString()))
-                .thenThrow(new IllegalStateException("Communication was blocked."));
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> fixture.coordinator.handle(
-                        new AgentCoordinatorRequest("Email the report", "recipient@example.com", handoff)
-                )
-        );
-    }
-
-    @Test
-    void requiresNonBlankUserMessage() {
-        Fixture fixture = new Fixture(null);
-
-        assertThrows(IllegalArgumentException.class, () -> fixture.coordinator.handle(null));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> fixture.coordinator.handle(new AgentCoordinatorRequest(" ", null, null))
-        );
-        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
-        verify(fixture.builder, never()).defaultTools(any(Object[].class));
-    }
-
-    private AgentCoordinator.IntentDecision decision(
-            AgentCoordinator.IntentAction action,
-            String response,
-            String clarificationQuestion
-    ) {
-        return new AgentCoordinator.IntentDecision(action, response, clarificationQuestion);
+    private AgentCoordinator.IntentDecision action(AgentCoordinator.IntentAction action) {
+        return new AgentCoordinator.IntentDecision(action, null, null);
     }
 
     private static class Fixture {
@@ -420,21 +213,44 @@ class AgentCoordinatorTest {
         private final CustomerReportAgent reportAgent = mock(CustomerReportAgent.class);
         private final EmailAgent emailAgent = mock(EmailAgent.class);
         private final ConversationMemory memory = new ConversationMemory();
+        private final ReportTools reportTools = mock(ReportTools.class);
         private final AgentCoordinator coordinator;
 
         private Fixture(AgentCoordinator.IntentDecision decision) {
             when(chatClient.prompt()).thenReturn(requestSpec);
             when(requestSpec.system(anyString())).thenReturn(requestSpec);
             when(requestSpec.messages(anyList())).thenReturn(requestSpec);
+            when(requestSpec.user(anyString())).thenReturn(requestSpec);
             when(requestSpec.call()).thenReturn(callResponseSpec);
             when(builder.build()).thenReturn(chatClient);
+            when(builder.defaultSystem(anyString())).thenReturn(builder);
+            when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+            try {
+                CustomerReportAgent realReportAgent = new CustomerReportAgent(
+                        builder,
+                        mock(com.agentops.guardian.tool.CustomerDataTools.class),
+                        reportTools,
+                        mock(com.agentops.guardian.governance.context.WorkflowContextManager.class),
+                        memory
+                );
+                when(reportAgent.execute(any(), any())).thenAnswer(inv ->
+                        realReportAgent.execute(inv.getArgument(0), inv.getArgument(1), reportAgent)
+                );
+            } catch (IOException ex) {
+                throw new IllegalStateException(ex);
+            }
             coordinator = new AgentCoordinator(builder, reportAgent, emailAgent, memory);
             decision(decision);
         }
 
         private void decision(AgentCoordinator.IntentDecision decision) {
-            when(callResponseSpec.entity(AgentCoordinator.IntentDecision.class))
-                    .thenReturn(decision);
+            when(callResponseSpec.entity(AgentCoordinator.IntentDecision.class)).thenReturn(decision);
+        }
+
+        private void verifiedGeneratedReport(String content) {
+            when(reportTools.executionResults()).thenReturn(List.of(
+                    new ReportTools.Report(ReportTools.ReportType.ANALYTICAL, false, 1, content)
+            ));
         }
     }
 }

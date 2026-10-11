@@ -1,31 +1,46 @@
 package com.agentops.guardian.agent;
 
-import com.agentops.guardian.tool.CustomerDataTools;
-import com.agentops.guardian.governance.workflow.WorkflowType;
+import com.agentops.guardian.coordinator.agent.AgentResult;
+import com.agentops.guardian.coordinator.context.Artifact;
+import com.agentops.guardian.coordinator.context.ExecutionRecord;
+import com.agentops.guardian.coordinator.context.SharedContextService;
+import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.workflow.WorkflowType;
+import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ReportTools;
-
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.UUID;
 
 @Service
 public class CustomerReportAgent {
 
     private final ChatClient chatClient;
     private final WorkflowContextManager workflowContextManager;
+    private final SharedContextService sharedContextService;
+    private final ReportTools reportTools;
 
+    @Autowired
     public CustomerReportAgent(
             ChatClient.Builder chatClientBuilder,
             CustomerDataTools customerDataTools,
             ReportTools reportTools,
-            WorkflowContextManager workflowContextManager) throws IOException {
+            WorkflowContextManager workflowContextManager,
+            SharedContextService sharedContextService) throws IOException {
 
         this.workflowContextManager = workflowContextManager;
+        this.sharedContextService = sharedContextService;
+        this.reportTools = reportTools;
 
         String systemPrompt = new String(
                 new ClassPathResource(
@@ -42,6 +57,82 @@ public class CustomerReportAgent {
                         reportTools
                 )
                 .build();
+    }
+
+    public CustomerReportAgent(
+            ChatClient.Builder chatClientBuilder,
+            CustomerDataTools customerDataTools,
+            ReportTools reportTools,
+            WorkflowContextManager workflowContextManager) throws IOException {
+        this(chatClientBuilder, customerDataTools, reportTools, workflowContextManager, null);
+    }
+
+    public AgentResult execute(UUID conversationId, AgentCoordinatorRequest request) {
+        return execute(conversationId, request, this);
+    }
+
+    public AgentResult execute(
+            UUID conversationId,
+            AgentCoordinatorRequest request,
+            CustomerReportAgent executionTarget
+    ) {
+        String message = request != null ? request.message() : null;
+        if (message == null || message.isBlank()) {
+            throw new IllegalArgumentException("A user message is required for report generation.");
+        }
+
+        String prompt = buildReportPrompt(message, conversationId);
+        reportTools.beginExecution();
+        try {
+            CustomerReportAgent target = executionTarget != null ? executionTarget : this;
+            String response = target.generateReport(prompt);
+            if (response == null || response.isBlank()) {
+                throw new IllegalStateException("Customer report agent returned no result.");
+            }
+            List<ReportTools.Report> generatedReports = reportTools.executionResults();
+            if (generatedReports.size() != 1) {
+                throw new IllegalStateException(
+                        "Customer report tool did not confirm exactly one report generation."
+                );
+            }
+            ReportTools.Report generatedReport = generatedReports.getFirst();
+            if (generatedReport.content() == null || generatedReport.content().isBlank()) {
+                throw new IllegalStateException("Customer report tool returned no report content.");
+            }
+
+            String artifactId = null;
+            if (sharedContextService != null && conversationId != null) {
+                Artifact artifact = sharedContextService.registerArtifact(
+                        conversationId,
+                        Artifact.generatedReport("Customer Report", generatedReport.content())
+                );
+                artifactId = artifact.id();
+                sharedContextService.recordExecution(
+                        conversationId,
+                        ExecutionRecord.success("CustomerReportAgent", "GENERATE_REPORT", "Report generated successfully", artifactId)
+                );
+            }
+
+            return AgentResult.success(response, artifactId);
+        } catch (GovernanceViolationException ex) {
+            if (sharedContextService != null && conversationId != null) {
+                sharedContextService.recordExecution(
+                        conversationId,
+                        ExecutionRecord.blocked("CustomerReportAgent", "GENERATE_REPORT", ex.getMessage())
+                );
+            }
+            throw ex;
+        } catch (RuntimeException ex) {
+            if (sharedContextService != null && conversationId != null) {
+                sharedContextService.recordExecution(
+                        conversationId,
+                        ExecutionRecord.failed("CustomerReportAgent", "GENERATE_REPORT", ex.getMessage())
+                );
+            }
+            throw ex;
+        } finally {
+            reportTools.clearExecutionResult();
+        }
     }
 
     public String generateReport(String message) {
@@ -72,5 +163,35 @@ public class CustomerReportAgent {
         } finally {
             workflowContextManager.clear();
         }
+    }
+
+    private String buildReportPrompt(String currentMessage, UUID conversationId) {
+        if (sharedContextService == null || conversationId == null) {
+            return currentMessage;
+        }
+        List<Message> messages = sharedContextService.history(conversationId);
+        List<String> priorUserMessages = messages.stream()
+                .filter(UserMessage.class::isInstance)
+                .map(Message::getText)
+                .filter(text -> text != null && !text.isBlank())
+                .toList();
+
+        if (priorUserMessages.isEmpty()) {
+            return currentMessage;
+        }
+
+        return """
+                Use earlier user messages only to resolve references in the current request.
+                The current user request takes precedence. Do not assume any prior action succeeded.
+
+                Earlier user messages:
+                %s
+
+                Current user request:
+                %s
+                """.formatted(
+                String.join("\n", priorUserMessages),
+                currentMessage
+        );
     }
 }

@@ -4,10 +4,14 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Component
 public class CommunicationTools {
+
+    private final ThreadLocal<List<EmailResult>> executionResults = new ThreadLocal<>();
 
     @Tool(description = """
             Sends an email message to a specified recipient.
@@ -43,12 +47,30 @@ public class CommunicationTools {
                 body
         ));
 
-        return new EmailResult(
+        EmailResult result = new EmailResult(
                 messageId,
                 recipient,
                 true,
                 LocalDateTime.now()
         );
+        List<EmailResult> results = executionResults.get();
+        if (results != null) {
+            results.add(result);
+        }
+        return result;
+    }
+
+    public void beginExecution() {
+        executionResults.set(new ArrayList<>());
+    }
+
+    public void clearExecutionResult() {
+        executionResults.remove();
+    }
+
+    public List<EmailResult> executionResults() {
+        List<EmailResult> results = executionResults.get();
+        return results == null ? List.of() : List.copyOf(results);
     }
 
     private void validate(String recipient, String subject, String body) {

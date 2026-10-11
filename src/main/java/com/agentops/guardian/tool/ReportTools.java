@@ -12,6 +12,8 @@ import com.agentops.guardian.governance.model.DataTransformation;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -19,6 +21,7 @@ public class ReportTools {
 
         private final ToolDataStore toolDataStore;
         private final WorkflowContextManager workflowContextManager;
+        private final ThreadLocal<List<Report>> executionResults = new ThreadLocal<>();
 
         @Tool(description = """
                         Generates a business report from the customer data retrieved
@@ -68,7 +71,24 @@ public class ReportTools {
                                                 reportType.name(),
                                                 Instant.now()));
 
+                List<Report> results = executionResults.get();
+                if (results != null) {
+                        results.add(report);
+                }
                 return report;
+        }
+
+        public void beginExecution() {
+                executionResults.set(new ArrayList<>());
+        }
+
+        public void clearExecutionResult() {
+                executionResults.remove();
+        }
+
+        public List<Report> executionResults() {
+                List<Report> results = executionResults.get();
+                return results == null ? List.of() : List.copyOf(results);
         }
 
         private Report generateAnalyticalReport(

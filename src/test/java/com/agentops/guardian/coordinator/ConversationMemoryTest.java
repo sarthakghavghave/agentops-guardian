@@ -1,5 +1,7 @@
 package com.agentops.guardian.coordinator;
 
+import com.agentops.guardian.coordinator.context.Artifact;
+import com.agentops.guardian.coordinator.context.ArtifactType;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
@@ -11,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -110,6 +113,43 @@ class ConversationMemoryTest {
         memory.recordTurn(conversationId, "x".repeat(5000), null);
 
         assertEquals(4000, memory.history(conversationId).getFirst().getText().length());
+    }
+
+    @Test
+    void sessionArtifactsAndAttributesAreConversationScopedAndRemovedOnExpiry() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-09T12:00:00Z"));
+        ConversationMemory memory = newMemory(clock, 10);
+        UUID owner = memory.open(null);
+        UUID other = memory.open(null);
+        Artifact report = Artifact.report("report-1", "Report body");
+        memory.registerArtifact(owner, report);
+        memory.setSessionAttribute(owner, "test-attr", "value");
+
+        Optional<Artifact> ownerArtifact = memory.getLatestArtifact(owner, ArtifactType.REPORT);
+        assertTrue(ownerArtifact.isPresent());
+        assertEquals("Report body", ownerArtifact.get().content());
+        assertTrue(memory.getLatestArtifact(other, ArtifactType.REPORT).isEmpty());
+        assertTrue(memory.getSessionAttribute(other, "test-attr", String.class).isEmpty());
+
+        clock.advance(Duration.ofMinutes(11));
+        ConversationMemory.ConversationException expired = assertThrows(
+                ConversationMemory.ConversationException.class,
+                () -> memory.open(owner.toString())
+        );
+        assertEquals(ConversationMemory.ConversationException.Kind.EXPIRED, expired.kind());
+        assertThrows(
+                ConversationMemory.ConversationException.class,
+                () -> memory.getLatestArtifact(owner, ArtifactType.REPORT)
+        );
+    }
+
+    @Test
+    void boundsStoredReportArtifactData() {
+        ConversationMemory memory = newMemory(new MutableClock(Instant.parse("2026-10-09T12:00:00Z")), 10);
+        UUID conversationId = memory.open(null);
+        assertThrows(IllegalArgumentException.class, () ->
+                memory.registerArtifact(conversationId, Artifact.report("oversized", "r".repeat(30001)))
+        );
     }
 
     private ConversationMemory newMemory(MutableClock clock, int maxConversations) {

@@ -1,5 +1,9 @@
 package com.agentops.guardian.coordinator;
 
+import com.agentops.guardian.coordinator.context.Artifact;
+import com.agentops.guardian.coordinator.context.ArtifactType;
+import com.agentops.guardian.coordinator.context.ExecutionRecord;
+import com.agentops.guardian.coordinator.context.SharedContextService;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
@@ -7,25 +11,25 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
-import com.agentops.guardian.tool.ReportTools;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-public class ConversationMemory {
+public class ConversationMemory implements SharedContextService {
 
     private static final int MAX_MESSAGES_PER_CONVERSATION = 12;
     private static final int MAX_STORED_TURN_CHARACTERS = 4000;
-    private static final int MAX_PENDING_REPORT_CHARACTERS = 30000;
     private static final int MAX_CONVERSATIONS = 500;
     private static final int MAX_EXPIRED_IDS = 1000;
     private static final Duration CONVERSATION_TTL = Duration.ofMinutes(30);
@@ -35,9 +39,6 @@ public class ConversationMemory {
             Pattern.compile("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", Pattern.CASE_INSENSITIVE);
     private static final Pattern PHONE_PATTERN =
             Pattern.compile("(?<!\\w)(?:\\+?\\d[\\d ().-]{7,}\\d)(?!\\w)");
-    private static final Pattern EMAIL_EXTRACT_PATTERN =
-            Pattern.compile("(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}(?![A-Z0-9._%+-])",
-                    Pattern.CASE_INSENSITIVE);
 
     private final ChatMemory chatMemory;
     private final Clock clock;
@@ -45,7 +46,9 @@ public class ConversationMemory {
     private final int maxConversations;
     private final LinkedHashMap<String, Instant> activeConversations = new LinkedHashMap<>(16, 0.75f, true);
     private final LinkedHashMap<String, Instant> expiredConversations = new LinkedHashMap<>();
-    private final Map<String, ReportTools.Report> pendingEmailReports = new LinkedHashMap<>();
+    private final Map<String, LinkedHashMap<String, Artifact>> conversationArtifacts = new LinkedHashMap<>();
+    private final Map<String, List<ExecutionRecord>> conversationExecutions = new LinkedHashMap<>();
+    private final Map<String, Map<String, Object>> sessionAttributes = new LinkedHashMap<>();
 
     public ConversationMemory() {
         this(
@@ -70,6 +73,7 @@ public class ConversationMemory {
         this.maxConversations = maxConversations;
     }
 
+    @Override
     public synchronized UUID open(String requestedConversationId) {
         Instant now = clock.instant();
         purgeExpired(now);
@@ -103,11 +107,13 @@ public class ConversationMemory {
         return conversationId;
     }
 
+    @Override
     public synchronized List<Message> history(UUID conversationId) {
         String key = requireConversation(conversationId);
         return List.copyOf(chatMemory.get(key));
     }
 
+    @Override
     public synchronized void recordTurn(
             UUID conversationId,
             String userMessage,
@@ -123,37 +129,156 @@ public class ConversationMemory {
         chatMemory.add(key, turn);
     }
 
-    public synchronized void rememberPendingEmailReport(UUID conversationId, ReportTools.Report report) {
-        if (report == null || report.content() == null || report.content().isBlank()) {
-            throw new IllegalArgumentException("A complete report is required for a pending email.");
+    // --- Artifact References ---
+
+    @Override
+    public synchronized Artifact registerArtifact(UUID conversationId, Artifact artifact) {
+        if (artifact == null) {
+            throw new IllegalArgumentException("A valid artifact is required.");
         }
         String key = requireConversation(conversationId);
-        if (report.content().length() > MAX_PENDING_REPORT_CHARACTERS) {
-            throw new IllegalArgumentException("Report content exceeds the pending conversation limit.");
-        }
-        pendingEmailReports.put(key, report);
+        LinkedHashMap<String, Artifact> artifacts = conversationArtifacts.computeIfAbsent(
+                key, k -> new LinkedHashMap<>()
+        );
+        artifacts.put(artifact.id(), artifact);
+        return artifact;
     }
 
-    public synchronized ReportTools.Report pendingEmailReport(UUID conversationId) {
+    @Override
+    public synchronized Optional<Artifact> getArtifact(UUID conversationId, String artifactId) {
+        if (artifactId == null || artifactId.isBlank()) {
+            return Optional.empty();
+        }
         String key = requireConversation(conversationId);
-        return pendingEmailReports.get(key);
+        Map<String, Artifact> artifacts = conversationArtifacts.get(key);
+        if (artifacts == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(artifacts.get(artifactId));
     }
 
-    public synchronized void clearPendingEmailReport(UUID conversationId) {
+    @Override
+    public synchronized Optional<Artifact> getLatestArtifact(UUID conversationId, ArtifactType type) {
+        if (type == null) {
+            return Optional.empty();
+        }
         String key = requireConversation(conversationId);
-        pendingEmailReports.remove(key);
+        Map<String, Artifact> artifacts = conversationArtifacts.get(key);
+        if (artifacts == null || artifacts.isEmpty()) {
+            return Optional.empty();
+        }
+        return artifacts.values().stream()
+                .filter(a -> a.type() == type)
+                .max(Comparator.comparing(Artifact::createdAt));
     }
 
-    public synchronized String extractSingleEmailAddress(String text) {
-        if (text == null) {
-            return null;
+    @Override
+    public synchronized List<Artifact> getArtifacts(UUID conversationId, ArtifactType type) {
+        String key = requireConversation(conversationId);
+        Map<String, Artifact> artifacts = conversationArtifacts.get(key);
+        if (artifacts == null || artifacts.isEmpty()) {
+            return List.of();
         }
-        Matcher matcher = EMAIL_EXTRACT_PATTERN.matcher(text);
-        if (!matcher.find()) {
-            return null;
+        return artifacts.values().stream()
+                .filter(a -> type == null || a.type() == type)
+                .sorted(Comparator.comparing(Artifact::createdAt))
+                .toList();
+    }
+
+    @Override
+    public synchronized void clearArtifacts(UUID conversationId, ArtifactType type) {
+        String key = requireConversation(conversationId);
+        Map<String, Artifact> artifacts = conversationArtifacts.get(key);
+        if (artifacts != null) {
+            if (type == null) {
+                artifacts.clear();
+            } else {
+                artifacts.entrySet().removeIf(entry -> entry.getValue().type() == type);
+            }
         }
-        String address = matcher.group();
-        return matcher.find() ? null : address;
+    }
+
+    // --- Execution Records ---
+
+    @Override
+    public synchronized void recordExecution(UUID conversationId, ExecutionRecord record) {
+        if (record == null) {
+            throw new IllegalArgumentException("Execution record is required.");
+        }
+        String key = requireConversation(conversationId);
+        conversationExecutions.computeIfAbsent(key, k -> new ArrayList<>()).add(record);
+    }
+
+    @Override
+    public synchronized List<ExecutionRecord> getExecutionRecords(UUID conversationId) {
+        String key = requireConversation(conversationId);
+        List<ExecutionRecord> records = conversationExecutions.get(key);
+        return records != null ? Collections.unmodifiableList(records) : List.of();
+    }
+
+    @Override
+    public synchronized Optional<ExecutionRecord> getLatestExecution(UUID conversationId) {
+        String key = requireConversation(conversationId);
+        List<ExecutionRecord> records = conversationExecutions.get(key);
+        if (records == null || records.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(records.getLast());
+    }
+
+    // --- Session Metadata ---
+
+    @Override
+    public synchronized void setSessionAttribute(UUID conversationId, String key, Object value) {
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("Session attribute key is required.");
+        }
+        String convKey = requireConversation(conversationId);
+        Map<String, Object> attrs = sessionAttributes.computeIfAbsent(convKey, k -> new LinkedHashMap<>());
+        if (value == null) {
+            attrs.remove(key);
+        } else {
+            attrs.put(key, value);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public synchronized <T> Optional<T> getSessionAttribute(UUID conversationId, String key, Class<T> type) {
+        if (key == null || key.isBlank()) {
+            return Optional.empty();
+        }
+        String convKey = requireConversation(conversationId);
+        Map<String, Object> attrs = sessionAttributes.get(convKey);
+        if (attrs == null) {
+            return Optional.empty();
+        }
+        Object value = attrs.get(key);
+        if (value != null && type.isInstance(value)) {
+            return Optional.of((T) value);
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public synchronized void removeSessionAttribute(UUID conversationId, String key) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String convKey = requireConversation(conversationId);
+        Map<String, Object> attrs = sessionAttributes.get(convKey);
+        if (attrs != null) {
+            attrs.remove(key);
+        }
+    }
+
+    @Override
+    public synchronized void clearSessionAttributes(UUID conversationId) {
+        String convKey = requireConversation(conversationId);
+        Map<String, Object> attrs = sessionAttributes.get(convKey);
+        if (attrs != null) {
+            attrs.clear();
+        }
     }
 
     private String requireConversation(UUID conversationId) {
@@ -224,7 +349,9 @@ public class ConversationMemory {
     private void expire(String key, Instant now) {
         activeConversations.remove(key);
         chatMemory.clear(key);
-        pendingEmailReports.remove(key);
+        conversationArtifacts.remove(key);
+        conversationExecutions.remove(key);
+        sessionAttributes.remove(key);
         expiredConversations.put(key, now);
         while (expiredConversations.size() > MAX_EXPIRED_IDS) {
             expiredConversations.remove(expiredConversations.keySet().iterator().next());

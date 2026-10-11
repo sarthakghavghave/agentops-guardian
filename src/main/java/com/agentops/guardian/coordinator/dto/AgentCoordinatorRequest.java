@@ -17,11 +17,21 @@ public record AgentCoordinatorRequest(
         String recipient,
         @Valid
         ReportHandoff report,
-        @Size(max = 36)
-        String conversationId
+        @Size(max = 36) String conversationId,
+        @Size(max = 500) String subjectInstructions,
+        @Size(max = 4000) String bodyInstructions
 ) {
     public AgentCoordinatorRequest(String message, String recipient, ReportHandoff report) {
-        this(message, recipient, report, null);
+        this(message, recipient, report, null, null, null);
+    }
+
+    public AgentCoordinatorRequest(
+            String message,
+            String recipient,
+            ReportHandoff report,
+            String conversationId
+    ) {
+        this(message, recipient, report, conversationId, null, null);
     }
 
     public record ReportHandoff(

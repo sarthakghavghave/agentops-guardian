@@ -24,6 +24,7 @@ class ReportToolsTest {
     void recordsRawToAnalyticalTransformation() {
         WorkflowContext workflow = workflowWithRawData();
         ReportTools tools = toolsFor(workflow);
+        tools.beginExecution();
 
         ReportTools.Report report = tools.generateReport(ReportTools.ReportType.ANALYTICAL);
 
@@ -34,6 +35,9 @@ class ReportToolsTest {
         assertEquals(DataClassification.ANALYTICAL,
                 workflow.getLastTransformation().resultClassification());
         assertEquals("ANALYTICAL", workflow.getLastTransformation().transformationType());
+        assertEquals(List.of(report), tools.executionResults());
+        tools.clearExecutionResult();
+        assertEquals(List.of(), tools.executionResults());
     }
 
     @Test
@@ -56,6 +60,7 @@ class ReportToolsTest {
     void failsWithoutKnownSourceClassification() {
         WorkflowContext workflow = workflow();
         ReportTools tools = toolsFor(workflow);
+        tools.beginExecution();
 
         assertThrows(
                 IllegalStateException.class,
@@ -63,6 +68,8 @@ class ReportToolsTest {
         );
         assertNull(workflow.getLastTransformation());
         assertNull(workflow.getCurrentDataClassification());
+        assertEquals(List.of(), tools.executionResults());
+        tools.clearExecutionResult();
     }
 
     private WorkflowContext workflowWithRawData() {
