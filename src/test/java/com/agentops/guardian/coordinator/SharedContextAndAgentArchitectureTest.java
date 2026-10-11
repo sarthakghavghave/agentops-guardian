@@ -95,7 +95,7 @@ class SharedContextAndAgentArchitectureTest {
         );
 
         assertEquals(AgentCoordinator.IntentAction.REPORT_REQUEST, response.action());
-        assertEquals("Generated Boston Q3 Report", response.response());
+        assertEquals("Analytical customer report PDF saved to data/reports/test-report.pdf.", response.response());
         verify(reportAgent).execute(any(), any());
         verify(reportAgent).generateReport(anyString());
         verifyNoInteractions(emailAgent);
@@ -137,7 +137,11 @@ class SharedContextAndAgentArchitectureTest {
         UUID conversationId = UUID.fromString(response.conversationId());
         Optional<Artifact> artifact = memory.getLatestArtifact(conversationId, ArtifactType.REPORT);
         assertTrue(artifact.isPresent());
-        assertEquals("Verified report content", artifact.get().content());
+        assertEquals("data/reports/test-report.pdf", artifact.get().content());
+        assertEquals("data/reports/test-report.pdf",
+                artifact.get().metadata().get(Artifact.FILE_REFERENCE_KEY));
+        assertEquals("PDF", artifact.get().metadata().get(Artifact.FORMAT_KEY));
+        assertEquals("ANALYTICAL", artifact.get().metadata().get(Artifact.REPORT_TYPE_KEY));
         assertEquals(Artifact.GENERATED_PROVENANCE, artifact.get().metadata().get(Artifact.PROVENANCE_KEY));
 
         List<ExecutionRecord> executions = memory.getExecutionRecords(conversationId);
@@ -184,7 +188,7 @@ class SharedContextAndAgentArchitectureTest {
         verify(emailAgent).process(captor.capture());
         assertEquals("execs@example.com", captor.getValue().recipient());
         assertNotNull(captor.getValue().reportContext());
-        assertEquals("Q3 Sales: $200k", captor.getValue().reportContext().content());
+        assertEquals("data/reports/test-report.pdf", captor.getValue().reportContext().content());
     }
 
     // 5. A report-email request without an available report asks for clarification or otherwise handles the missing dependency safely.
@@ -350,7 +354,14 @@ class SharedContextAndAgentArchitectureTest {
 
     private void verifiedGeneratedReport(String content) {
         when(reportTools.executionResults()).thenReturn(List.of(
-                new ReportTools.Report(ReportTools.ReportType.ANALYTICAL, false, 1, content)
+                new ReportTools.Report(
+                        ReportTools.ReportType.ANALYTICAL,
+                        false,
+                        1,
+                        content,
+                        "data/reports/test-report.pdf",
+                        128
+                )
         ));
     }
 

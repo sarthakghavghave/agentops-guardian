@@ -120,7 +120,14 @@ class CustomerReportAgentTest {
         WorkflowContextManager manager = mock(WorkflowContextManager.class);
         ReportTools reportTools = mock(ReportTools.class);
         when(reportTools.executionResults()).thenReturn(java.util.List.of(
-                new ReportTools.Report(ReportTools.ReportType.ANALYTICAL, false, 3, "Verified report output")
+                new ReportTools.Report(
+                        ReportTools.ReportType.ANALYTICAL,
+                        false,
+                        3,
+                        "Verified report output",
+                        "data/reports/generated.pdf",
+                        128
+                )
         ));
         ConversationMemory memory = new ConversationMemory();
         UUID conversationId = memory.open(null);
@@ -131,11 +138,42 @@ class CustomerReportAgentTest {
         agent.execute(conversationId, new AgentCoordinatorRequest("Generate the report", null, null));
 
         Artifact report = memory.getLatestArtifact(conversationId, ArtifactType.REPORT).orElseThrow();
-        assertEquals("Verified report output", report.content());
+        assertEquals("data/reports/generated.pdf", report.content());
         assertEquals(Artifact.GENERATED_PROVENANCE, report.metadata().get(Artifact.PROVENANCE_KEY));
+        assertEquals("data/reports/generated.pdf", report.metadata().get(Artifact.FILE_REFERENCE_KEY));
+        assertEquals("PDF", report.metadata().get(Artifact.FORMAT_KEY));
+        assertEquals("ANALYTICAL", report.metadata().get(Artifact.REPORT_TYPE_KEY));
+        assertEquals("3", report.metadata().get("customerCount"));
+        assertFalse(report.content().contains("Verified report output"));
         assertEquals(ExecutionStatus.SUCCESS, memory.getLatestExecution(conversationId).orElseThrow().status());
         verify(reportTools).beginExecution();
         verify(reportTools).clearExecutionResult();
+    }
+
+    @Test
+    void doesNotRegisterOrReportSuccessWhenAnalyticalPdfWasNotStored() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        mockChatClient(builder, "Assistant summary");
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        ReportTools reportTools = mock(ReportTools.class);
+        when(reportTools.executionResults()).thenReturn(java.util.List.of(
+                new ReportTools.Report(
+                        ReportTools.ReportType.ANALYTICAL, false, 3, "Report text", null, 0
+                )
+        ));
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        CustomerReportAgent agent = new CustomerReportAgent(
+                builder, mock(CustomerDataTools.class), reportTools, manager, memory
+        );
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> agent.execute(conversationId, new AgentCoordinatorRequest("Generate the report", null, null))
+        );
+
+        assertTrue(memory.getLatestArtifact(conversationId, ArtifactType.REPORT).isEmpty());
+        assertEquals(ExecutionStatus.FAILED, memory.getLatestExecution(conversationId).orElseThrow().status());
     }
 
     @Test

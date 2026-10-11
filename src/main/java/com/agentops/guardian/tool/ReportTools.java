@@ -1,6 +1,5 @@
 package com.agentops.guardian.tool;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -8,7 +7,15 @@ import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.DataTransformation;
-
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -16,12 +23,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 public class ReportTools {
 
         private final ToolDataStore toolDataStore;
         private final WorkflowContextManager workflowContextManager;
+        private final ReportFileStorageService reportFileStorageService;
         private final ThreadLocal<List<Report>> executionResults = new ThreadLocal<>();
+
+        public ReportTools(
+                        ToolDataStore toolDataStore,
+                        WorkflowContextManager workflowContextManager,
+                        ReportFileStorageService reportFileStorageService) {
+                this.toolDataStore = toolDataStore;
+                this.workflowContextManager = workflowContextManager;
+                this.reportFileStorageService = reportFileStorageService;
+        }
 
         @Tool(description = """
                         Generates a business report from the customer data retrieved
@@ -70,6 +86,12 @@ public class ReportTools {
                                                 resultClassification,
                                                 reportType.name(),
                                                 Instant.now()));
+
+                if (reportType == ReportType.ANALYTICAL) {
+                        ReportFileStorageService.StoredReport storedReport =
+                                        reportFileStorageService.storePdf(createPdf(report));
+                        report = report.withStoredFile(storedReport.reference(), storedReport.sizeBytes());
+                }
 
                 List<Report> results = executionResults.get();
                 if (results != null) {
@@ -132,7 +154,51 @@ public class ReportTools {
                                 ReportType.ANALYTICAL,
                                 false,
                                 data.customerCount(),
-                                content);
+                                content,
+                                null,
+                                0);
+        }
+
+        private byte[] createPdf(Report report) {
+                try (PDDocument document = new PDDocument();
+                                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                        PDPage page = new PDPage(PDRectangle.LETTER);
+                        document.addPage(page);
+
+                        try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+                                float y = page.getMediaBox().getHeight() - 54;
+                                String[] lines = report.content().split("\\R", -1);
+                                for (int index = 0; index < lines.length; index++) {
+                                        String line = toPdfText(lines[index]);
+                                        if (line.isBlank()) {
+                                                y -= 10;
+                                                continue;
+                                        }
+                                        PDType1Font font = index == 0
+                                                        ? new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD)
+                                                        : new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+                                        float fontSize = index == 0 ? 18 : 11;
+                                        contentStream.beginText();
+                                        contentStream.setFont(font, fontSize);
+                                        contentStream.newLineAtOffset(54, y);
+                                        contentStream.showText(line);
+                                        contentStream.endText();
+                                        y -= index == 0 ? 28 : 18;
+                                }
+                        }
+
+                        document.save(output);
+                        return output.toByteArray();
+                } catch (IOException exception) {
+                        throw new UncheckedIOException("Unable to generate analytical report PDF.", exception);
+                }
+        }
+
+        private String toPdfText(String value) {
+                return value.codePoints()
+                                .map(codePoint -> codePoint >= 32 && codePoint <= 255 ? codePoint : '?')
+                                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                                .toString();
         }
 
         private Report generateRedactedReport(
@@ -207,6 +273,16 @@ public class ReportTools {
                         ReportType type,
                         boolean redacted,
                         int customerCount,
-                        String content) {
+                        String content,
+                        String fileReference,
+                        long fileSizeBytes) {
+
+                public Report(ReportType type, boolean redacted, int customerCount, String content) {
+                        this(type, redacted, customerCount, content, null, 0);
+                }
+
+                private Report withStoredFile(String reference, long sizeBytes) {
+                        return new Report(type, redacted, customerCount, content, reference, sizeBytes);
+                }
         }
 }

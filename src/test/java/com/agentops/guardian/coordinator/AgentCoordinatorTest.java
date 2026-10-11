@@ -249,7 +249,14 @@ class AgentCoordinatorTest {
 
         private void verifiedGeneratedReport(String content) {
             when(reportTools.executionResults()).thenReturn(List.of(
-                    new ReportTools.Report(ReportTools.ReportType.ANALYTICAL, false, 1, content)
+                    new ReportTools.Report(
+                            ReportTools.ReportType.ANALYTICAL,
+                            false,
+                            1,
+                            content,
+                            "data/reports/test-report.pdf",
+                            128
+                    )
             ));
         }
     }

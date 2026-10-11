@@ -17,6 +17,9 @@ public record Artifact(
     public static final String PROVENANCE_KEY = "provenance";
     public static final String GENERATED_PROVENANCE = "CUSTOMER_REPORT_AGENT";
     public static final String SUPPLIED_PROVENANCE = "USER_SUPPLIED";
+    public static final String FILE_REFERENCE_KEY = "fileReference";
+    public static final String FORMAT_KEY = "format";
+    public static final String REPORT_TYPE_KEY = "reportType";
 
     public Artifact {
         if (id == null || id.isBlank()) {
@@ -54,6 +57,35 @@ public record Artifact(
                 content,
                 Instant.now(),
                 Map.of(PROVENANCE_KEY, GENERATED_PROVENANCE)
+        );
+    }
+
+    public static Artifact generatedPdfReport(
+            String title,
+            String fileReference,
+            long fileSizeBytes,
+            int customerCount
+    ) {
+        if (fileReference == null || fileReference.isBlank()) {
+            throw new IllegalArgumentException("A stored report file reference is required.");
+        }
+        if (fileSizeBytes <= 0 || customerCount < 0) {
+            throw new IllegalArgumentException("Stored report metadata is invalid.");
+        }
+        return new Artifact(
+                UUID.randomUUID().toString(),
+                ArtifactType.REPORT,
+                title,
+                fileReference,
+                Instant.now(),
+                Map.of(
+                        PROVENANCE_KEY, GENERATED_PROVENANCE,
+                        FILE_REFERENCE_KEY, fileReference,
+                        FORMAT_KEY, "PDF",
+                        REPORT_TYPE_KEY, "ANALYTICAL",
+                        "customerCount", Integer.toString(customerCount),
+                        "fileSizeBytes", Long.toString(fileSizeBytes)
+                )
         );
     }
 

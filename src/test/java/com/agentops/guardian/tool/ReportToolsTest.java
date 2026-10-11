@@ -7,28 +7,73 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
 import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class ReportToolsTest {
 
+    @TempDir
+    Path tempDirectory;
+
     @Test
-    void recordsRawToAnalyticalTransformation() {
+    void storesAnalyticalReportAsReadablePdfAndRecordsTransformation() throws IOException {
         WorkflowContext workflow = workflowWithRawData();
-        ReportTools tools = toolsFor(workflow);
+        CustomerDataTools.CustomerDataSet customerData = new CustomerDataTools.CustomerDataSet(
+                "Test City",
+                1,
+                List.of(new CustomerDataTools.CustomerRecord(
+                        "customer-id",
+                        "Private Customer",
+                        "private@example.test",
+                        "Test City",
+                        List.of(new CustomerDataTools.OrderRecord(
+                                "order-id",
+                                LocalDateTime.parse("2026-01-01T12:00:00"),
+                                "COMPLETED",
+                                new BigDecimal("30.00"),
+                                List.of()
+                        ))
+                ))
+        );
+        ReportTools tools = toolsFor(workflow, tempDirectory, customerData);
         tools.beginExecution();
 
         ReportTools.Report report = tools.generateReport(ReportTools.ReportType.ANALYTICAL);
 
         assertEquals(ReportTools.ReportType.ANALYTICAL, report.type());
+        assertTrue(report.fileReference().endsWith(".pdf"));
+        assertTrue(Files.isRegularFile(Path.of(report.fileReference())));
+        assertTrue(report.fileSizeBytes() > 0);
+        try (PDDocument document = Loader.loadPDF(Path.of(report.fileReference()).toFile())) {
+            String text = new PDFTextStripper().getText(document);
+            assertTrue(text.contains("Customer Analytics Report"));
+            assertTrue(text.contains("Customer Segment: Test City"));
+            assertTrue(text.contains("Customers Analyzed: 1"));
+            assertTrue(text.contains("Total Orders: 1"));
+            assertTrue(text.contains("Total Order Value: 30.00"));
+            assertTrue(text.contains("Average Order Value: 30.00"));
+            assertFalse(text.contains("Private Customer"));
+            assertFalse(text.contains("private@example.test"));
+        }
         assertEquals(DataClassification.ANALYTICAL, workflow.getCurrentDataClassification());
         assertEquals(DataClassification.RAW_CUSTOMER_DATA,
                 workflow.getLastTransformation().sourceClassification());
@@ -41,9 +86,9 @@ class ReportToolsTest {
     }
 
     @Test
-    void recordsRawToRedactedDetailTransformation() {
+    void preservesExistingRedactedDetailTransformation() {
         WorkflowContext workflow = workflowWithRawData();
-        ReportTools tools = toolsFor(workflow);
+        ReportTools tools = toolsFor(workflow, tempDirectory);
 
         ReportTools.Report report = tools.generateReport(ReportTools.ReportType.REDACTED_DETAIL);
 
@@ -59,7 +104,7 @@ class ReportToolsTest {
     @Test
     void failsWithoutKnownSourceClassification() {
         WorkflowContext workflow = workflow();
-        ReportTools tools = toolsFor(workflow);
+        ReportTools tools = toolsFor(workflow, tempDirectory);
         tools.beginExecution();
 
         assertThrows(
@@ -70,6 +115,30 @@ class ReportToolsTest {
         assertNull(workflow.getCurrentDataClassification());
         assertEquals(List.of(), tools.executionResults());
         tools.clearExecutionResult();
+    }
+
+    @Test
+    void failedPdfWriteDoesNotConfirmReportGeneration() throws IOException {
+        WorkflowContext workflow = workflowWithRawData();
+        Path blockedDirectory = tempDirectory.resolve("not-a-directory");
+        Files.writeString(blockedDirectory, "block directory creation");
+        ReportTools tools = toolsFor(workflow, blockedDirectory);
+        tools.beginExecution();
+
+        assertThrows(
+                java.io.UncheckedIOException.class,
+                () -> tools.generateReport(ReportTools.ReportType.ANALYTICAL)
+        );
+        assertEquals(List.of(), tools.executionResults());
+        tools.clearExecutionResult();
+    }
+
+    @Test
+    void rejectsReportStorageInsideSourceTree() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ReportFileStorageService(Path.of("src", "main", "resources", "reports").toString())
+        );
     }
 
     private WorkflowContext workflowWithRawData() {
@@ -91,11 +160,27 @@ class ReportToolsTest {
         return new WorkflowContext("ReportToolsTestAgent", WorkflowType.CUSTOMER_REPORTING, "Test report", definition);
     }
 
-    private ReportTools toolsFor(WorkflowContext workflow) {
+    private ReportTools toolsFor(WorkflowContext workflow, Path reportDirectory) {
+        return toolsFor(
+                workflow,
+                reportDirectory,
+                new CustomerDataTools.CustomerDataSet("Test City", 0, List.of())
+        );
+    }
+
+    private ReportTools toolsFor(
+            WorkflowContext workflow,
+            Path reportDirectory,
+            CustomerDataTools.CustomerDataSet customerData
+    ) {
         WorkflowContextManager workflowContextManager = mock(WorkflowContextManager.class);
         when(workflowContextManager.current()).thenReturn(workflow);
         ToolDataStore toolDataStore = new ToolDataStore(workflowContextManager);
-        toolDataStore.storeCustomerData(new CustomerDataTools.CustomerDataSet("Test City", 0, List.of()));
-        return new ReportTools(toolDataStore, workflowContextManager);
+        toolDataStore.storeCustomerData(customerData);
+        return new ReportTools(
+                toolDataStore,
+                workflowContextManager,
+                new ReportFileStorageService(reportDirectory.toString())
+        );
     }
 }

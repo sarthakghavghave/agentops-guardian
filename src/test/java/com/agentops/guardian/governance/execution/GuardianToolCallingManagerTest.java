@@ -26,6 +26,7 @@ import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ReportTools;
+import com.agentops.guardian.tool.ReportFileStorageService;
 import com.agentops.guardian.tool.ToolDataStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -622,7 +623,11 @@ class GuardianToolCallingManagerTest {
         private void configureReadAndReportDelegate() {
                 ToolDataStore toolDataStore = new ToolDataStore(workflowContextManager);
                 toolDataStore.storeCustomerData(new CustomerDataTools.CustomerDataSet("Test City", 0, List.of()));
-                ReportTools reportTools = new ReportTools(toolDataStore, workflowContextManager);
+                ReportTools reportTools = new ReportTools(
+                        toolDataStore,
+                        workflowContextManager,
+                        new ReportFileStorageService("target/test-reports")
+                );
                 when(delegate.executeToolCalls(any(), any())).thenAnswer(invocation -> {
                         ChatResponse response = invocation.getArgument(1);
                         AssistantMessage.ToolCall toolCall = response.getResult().getOutput().getToolCalls().getFirst();

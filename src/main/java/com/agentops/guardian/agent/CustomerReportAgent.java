@@ -102,18 +102,34 @@ public class CustomerReportAgent {
 
             String artifactId = null;
             if (sharedContextService != null && conversationId != null) {
-                Artifact artifact = sharedContextService.registerArtifact(
-                        conversationId,
-                        Artifact.generatedReport("Customer Report", generatedReport.content())
-                );
-                artifactId = artifact.id();
+                if (generatedReport.type() == ReportTools.ReportType.ANALYTICAL) {
+                    if (generatedReport.fileReference() == null || generatedReport.fileReference().isBlank()
+                            || generatedReport.fileSizeBytes() <= 0) {
+                        throw new IllegalStateException(
+                                "Analytical report generation was not confirmed with a stored PDF."
+                        );
+                    }
+                    Artifact artifact = sharedContextService.registerArtifact(
+                            conversationId,
+                            Artifact.generatedPdfReport(
+                                    "Customer Analytics Report",
+                                    generatedReport.fileReference(),
+                                    generatedReport.fileSizeBytes(),
+                                    generatedReport.customerCount()
+                            )
+                    );
+                    artifactId = artifact.id();
+                }
                 sharedContextService.recordExecution(
                         conversationId,
                         ExecutionRecord.success("CustomerReportAgent", "GENERATE_REPORT", "Report generated successfully", artifactId)
                 );
             }
 
-            return AgentResult.success(response, artifactId);
+            String agentResponse = generatedReport.type() == ReportTools.ReportType.ANALYTICAL
+                    ? "Analytical customer report PDF saved to " + generatedReport.fileReference() + "."
+                    : response;
+            return AgentResult.success(agentResponse, artifactId);
         } catch (GovernanceViolationException ex) {
             if (sharedContextService != null && conversationId != null) {
                 sharedContextService.recordExecution(
