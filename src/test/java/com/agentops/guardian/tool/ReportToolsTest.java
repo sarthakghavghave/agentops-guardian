@@ -49,7 +49,13 @@ class ReportToolsTest {
                                 "order-id",
                                 LocalDateTime.parse("2026-01-01T12:00:00"),
                                 "COMPLETED",
-                                new BigDecimal("30.00"),
+                                new BigDecimal("12345.67"),
+                                List.of()
+                        ), new CustomerDataTools.OrderRecord(
+                                "order-id-2",
+                                LocalDateTime.parse("2026-01-02T12:00:00"),
+                                "COMPLETED",
+                                new BigDecimal("300.00"),
                                 List.of()
                         ))
                 ))
@@ -66,11 +72,18 @@ class ReportToolsTest {
         try (PDDocument document = Loader.loadPDF(Path.of(report.fileReference()).toFile())) {
             String text = new PDFTextStripper().getText(document);
             assertTrue(text.contains("Customer Analytics Report"));
-            assertTrue(text.contains("Customer Segment: Test City"));
-            assertTrue(text.contains("Customers Analyzed: 1"));
-            assertTrue(text.contains("Total Orders: 1"));
-            assertTrue(text.contains("Total Order Value: 30.00"));
-            assertTrue(text.contains("Average Order Value: 30.00"));
+            assertTrue(text.contains("CUSTOMER SEGMENT"));
+            assertTrue(text.contains("Test City"));
+            assertTrue(text.contains("CUSTOMERS ANALYZED"));
+            assertTrue(text.contains("TOTAL ORDERS"));
+            assertTrue(text.contains("1"));
+            assertTrue(text.contains("2"));
+            assertTrue(text.contains("12,645.67"));
+            assertTrue(text.contains("6,322.84"));
+            assertTrue(text.contains("currency."));
+            assertTrue(text.contains("AgentOps Guardian"));
+            assertTrue(text.contains("Generated " + LocalDateTime.now().toLocalDate()));
+            assertTrue(text.contains("Page 1 of 1"));
             assertFalse(text.contains("Private Customer"));
             assertFalse(text.contains("private@example.test"));
         }
