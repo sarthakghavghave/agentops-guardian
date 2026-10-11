@@ -3,11 +3,13 @@ package com.agentops.guardian.coordinator;
 import com.agentops.guardian.agent.CustomerReportAgent;
 import com.agentops.guardian.agent.EmailAgent;
 import com.agentops.guardian.coordinator.agent.AgentResult;
+import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.ExecutionRecord;
 import com.agentops.guardian.coordinator.context.ExecutionStatus;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
+import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.tool.ReportTools;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -26,6 +28,90 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class AgentCoordinatorTest {
+
+    @Test
+    void reportMetadataQuestionReturnsRegisteredMetadataWithoutGeneratingReport() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_METADATA_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        Artifact report = fixture.memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Monthly Customer Report", "data/reports/monthly.pdf", 2048, 42)
+        );
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(new AgentCoordinatorRequest(
+                "What is the report ID of the report you created?",
+                null,
+                null,
+                conversationId.toString()
+        ));
+
+        assertFalse(response.clarificationRequired());
+        assertTrue(response.response().contains("Report ID: " + report.id()));
+        assertTrue(response.response().contains("Title: Monthly Customer Report"));
+        assertTrue(response.response().contains("Created: " + report.createdAt()));
+        assertTrue(response.response().contains("Availability: available"));
+        assertTrue(response.response().contains("Format: PDF"));
+        assertTrue(response.response().contains("Customers analyzed: 42"));
+        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
+    }
+
+    @Test
+    void reportMetadataQuestionExplainsWhenNoGeneratedReportIsAvailable() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_METADATA_REQUEST));
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Is a report available?", null, null)
+        );
+
+        assertFalse(response.clarificationRequired());
+        assertTrue(response.response().contains("No generated report is available"));
+        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
+    }
+
+    @Test
+    void reportMetadataQuestionClarifiesWhenMultipleReportsAreAvailable() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_METADATA_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        Artifact first = fixture.memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("April Report", "data/reports/april.pdf", 1024, 10)
+        );
+        Artifact second = fixture.memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("May Report", "data/reports/may.pdf", 1536, 12)
+        );
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(new AgentCoordinatorRequest(
+                "What is the title of the report?",
+                null,
+                null,
+                conversationId.toString()
+        ));
+
+        assertTrue(response.clarificationRequired());
+        assertTrue(response.response().contains("Which report do you mean?"));
+        assertTrue(response.response().contains(first.title()));
+        assertTrue(response.response().contains(second.title()));
+        assertTrue(response.response().contains(first.id()));
+        assertTrue(response.response().contains(second.id()));
+        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
+    }
+
+    @Test
+    void reportCreationRequestStillRunsCustomerReportAgent() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
+        when(fixture.reportAgent.generateReport(anyString())).thenReturn("Model report output");
+        fixture.verifiedGeneratedReport("Verified report output");
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Create a new customer report", null, null)
+        );
+
+        assertFalse(response.clarificationRequired());
+        assertTrue(response.response().contains("Analytical customer report PDF saved"));
+        verify(fixture.reportAgent).execute(any(), any());
+        verifyNoInteractions(fixture.emailAgent);
+    }
 
     @Test
     void reportArtifactCanBeHandedToEmailAgentInSameConversation() throws IOException {
@@ -53,6 +139,63 @@ class AgentCoordinatorTest {
         assertEquals(UUID.fromString(reportResponse.conversationId()), conversation.getValue());
         assertEquals("Please email that report to finance@example.com", emailRequest.getValue().message());
         assertTrue(fixture.memory.getLatestArtifact(conversation.getValue(), ArtifactType.REPORT).isPresent());
+    }
+
+    @Test
+    void coordinatorConstructsTypedHandoffFromRegisteredArtifactForEmailAttachment() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        Artifact report = fixture.memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Monthly Customer Report", "data/reports/monthly.pdf", 2048, 42)
+        );
+        fixture.decision(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST,
+                null,
+                null,
+                null,
+                report.id()
+        ));
+        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+                .when(fixture.emailAgent).execute(any(), any(), any());
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(new AgentCoordinatorRequest(
+                "Email the report as an attachment to finance@example.test",
+                "finance@example.test",
+                null,
+                conversationId.toString()
+        ));
+
+        assertFalse(response.clarificationRequired());
+        ArgumentCaptor<ReportArtifactHandoff> handoff = ArgumentCaptor.forClass(ReportArtifactHandoff.class);
+        verify(fixture.emailAgent).execute(eq(conversationId), any(), handoff.capture());
+        assertEquals(report.id(), handoff.getValue().artifactId());
+        assertEquals(report.title(), handoff.getValue().title());
+        assertEquals("ANALYTICAL", handoff.getValue().reportType());
+        assertEquals("PDF", handoff.getValue().format());
+        assertEquals("data/reports/monthly.pdf", handoff.getValue().storageReference());
+        assertEquals(report.createdAt(), handoff.getValue().createdAt());
+        assertEquals(report.metadata(), handoff.getValue().metadata());
+        verifyNoInteractions(fixture.reportAgent);
+    }
+
+    @Test
+    void coordinatorRejectsUnregisteredReportHandoffWithoutCallingEmailAgent() {
+        Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST,
+                null,
+                null,
+                null,
+                "forged-artifact-id"
+        ));
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Attach that report to my email", "finance@example.test", null)
+        );
+
+        assertTrue(response.clarificationRequired());
+        assertTrue(response.response().contains("not available"));
+        verifyNoInteractions(fixture.emailAgent, fixture.reportAgent);
     }
 
     @Test

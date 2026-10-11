@@ -6,6 +6,7 @@ import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.ExecutionRecord;
 import com.agentops.guardian.coordinator.context.ExecutionStatus;
+import com.agentops.guardian.coordinator.agent.AgentResult;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
@@ -164,15 +165,15 @@ class SharedContextAndAgentArchitectureTest {
                 new AgentCoordinatorRequest("Generate sales report", null, null)
         );
 
-        mockIntentDecision(new AgentCoordinator.IntentDecision(
-                AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null
-        ));
         Artifact report = memory.getLatestArtifact(
                 UUID.fromString(reportResponse.conversationId()),
                 ArtifactType.REPORT
         ).orElseThrow();
-        mockEmailDecision(sendDecision("execs@example.com", "Q3 sales report", "Attached is the report.", report.id()));
-        doReturn("Simulated email accepted. Message ID: msg-2").when(emailAgent).process(any());
+        mockIntentDecision(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null, null, report.id()
+        ));
+        doReturn(AgentResult.success("Simulated email accepted. Message ID: msg-2"))
+                .when(emailAgent).execute(any(), any(), any());
 
         AgentCoordinatorResponse emailResponse = coordinator.handle(
                 new AgentCoordinatorRequest(
@@ -184,11 +185,11 @@ class SharedContextAndAgentArchitectureTest {
         );
 
         assertFalse(emailResponse.clarificationRequired());
-        ArgumentCaptor<EmailAgent.EmailRequest> captor = ArgumentCaptor.forClass(EmailAgent.EmailRequest.class);
-        verify(emailAgent).process(captor.capture());
-        assertEquals("execs@example.com", captor.getValue().recipient());
-        assertNotNull(captor.getValue().reportContext());
-        assertEquals("data/reports/test-report.pdf", captor.getValue().reportContext().content());
+        ArgumentCaptor<com.agentops.guardian.coordinator.dto.ReportArtifactHandoff> captor =
+                ArgumentCaptor.forClass(com.agentops.guardian.coordinator.dto.ReportArtifactHandoff.class);
+        verify(emailAgent).execute(any(), any(), captor.capture());
+        assertEquals(report.id(), captor.getValue().artifactId());
+        assertEquals("data/reports/test-report.pdf", captor.getValue().storageReference());
     }
 
     // 5. A report-email request without an available report asks for clarification or otherwise handles the missing dependency safely.

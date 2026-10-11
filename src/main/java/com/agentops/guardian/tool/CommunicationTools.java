@@ -12,6 +12,7 @@ import java.util.UUID;
 public class CommunicationTools {
 
     private final ThreadLocal<List<EmailResult>> executionResults = new ThreadLocal<>();
+    private final ThreadLocal<EmailAttachment> executionAttachment = new ThreadLocal<>();
 
     @Tool(description = """
             Sends an email message to a specified recipient.
@@ -31,12 +32,19 @@ public class CommunicationTools {
 
         String messageId = UUID.randomUUID().toString();
 
+        EmailAttachment attachment = executionAttachment.get();
+        String attachmentSummary = attachment == null
+                ? ""
+                : "\nAttachment  : %s (%s, %d bytes)".formatted(
+                        attachment.fileName(), attachment.contentType(), attachment.content().length);
+
         System.out.println("""
                 
                 ================= OUTBOUND EMAIL =================
                 Message ID : %s
                 Recipient  : %s
                 Subject    : %s
+                %s
                 
                 %s
                 ====================================================
@@ -44,6 +52,7 @@ public class CommunicationTools {
                 messageId,
                 recipient,
                 subject,
+                attachmentSummary,
                 body
         ));
 
@@ -51,7 +60,8 @@ public class CommunicationTools {
                 messageId,
                 recipient,
                 true,
-                LocalDateTime.now()
+                LocalDateTime.now(),
+                attachment == null ? null : attachment.fileName()
         );
         List<EmailResult> results = executionResults.get();
         if (results != null) {
@@ -73,6 +83,18 @@ public class CommunicationTools {
         return results == null ? List.of() : List.copyOf(results);
     }
 
+    public void setAttachmentForExecution(EmailAttachment attachment) {
+        if (attachment == null) {
+            executionAttachment.remove();
+        } else {
+            executionAttachment.set(attachment);
+        }
+    }
+
+    public void clearAttachmentForExecution() {
+        executionAttachment.remove();
+    }
+
     private void validate(String recipient, String subject, String body) {
 
         if (recipient == null || recipient.isBlank()) {
@@ -92,6 +114,27 @@ public class CommunicationTools {
             String messageId,
             String recipient,
             boolean accepted,
-            LocalDateTime timestamp
-    ) {}
+            LocalDateTime timestamp,
+            String attachmentFileName
+    ) {
+        public EmailResult(String messageId, String recipient, boolean accepted, LocalDateTime timestamp) {
+            this(messageId, recipient, accepted, timestamp, null);
+        }
+    }
+
+    public record EmailAttachment(String fileName, String contentType, byte[] content) {
+        public EmailAttachment {
+            if (fileName == null || fileName.isBlank()
+                    || contentType == null || contentType.isBlank()
+                    || content == null || content.length == 0) {
+                throw new IllegalArgumentException("A valid email attachment is required.");
+            }
+            content = content.clone();
+        }
+
+        @Override
+        public byte[] content() {
+            return content.clone();
+        }
+    }
 }

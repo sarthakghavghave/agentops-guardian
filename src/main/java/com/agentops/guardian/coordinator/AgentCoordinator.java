@@ -3,9 +3,12 @@ package com.agentops.guardian.coordinator;
 import com.agentops.guardian.agent.CustomerReportAgent;
 import com.agentops.guardian.agent.EmailAgent;
 import com.agentops.guardian.coordinator.agent.AgentResult;
+import com.agentops.guardian.coordinator.context.Artifact;
+import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
+import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -13,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -20,11 +24,21 @@ public class AgentCoordinator {
 
     private static final String SYSTEM_PROMPT = """
             Classify the current user message into an appropriate routing action:
-            REPORT_REQUEST, EMAIL_REQUEST, GENERAL_RESPONSE, or CLARIFICATION_REQUIRED.
+            REPORT_REQUEST, REPORT_METADATA_REQUEST, EMAIL_REQUEST, GENERAL_RESPONSE,
+            or CLARIFICATION_REQUIRED.
 
             Registered agents:
-            - CustomerReportAgent (REPORT_REQUEST): customer data analysis and report generation.
+            - CustomerReportAgent (REPORT_REQUEST): create or regenerate customer reports only.
             - EmailAgent (EMAIL_REQUEST): email composition and sending.
+
+            Questions about reports already created in this conversation, such as asking
+            for a report ID, title, creation date, details, or whether a report is available,
+            must use REPORT_METADATA_REQUEST. Never route those questions to report generation.
+            Use REPORT_REQUEST only when the user is asking to create or regenerate a report.
+            For EMAIL_REQUEST, set reportArtifactId only when the user requests attaching a
+            registered generated PDF report. Choose an exact ID from the registered reports
+            included in the routing context. If the intended report is ambiguous, leave it
+            unset so EmailAgent can clarify. Never invent an artifact ID.
 
             Return typed intent fields only. Never choose tools, agents, classes,
             methods, or code. For GENERAL_RESPONSE and CLARIFICATION_REQUIRED,
@@ -64,6 +78,10 @@ public class AgentCoordinator {
 
         UUID conversationId = sharedContextService.open(request.conversationId());
         List<Message> messages = new ArrayList<>(sharedContextService.history(conversationId));
+        String artifactContext = buildReportArtifactRoutingContext(conversationId);
+        if (!artifactContext.isBlank()) {
+            messages.add(new UserMessage(artifactContext));
+        }
         messages.add(new UserMessage(request.message()));
 
         IntentDecision decision = intentClient.prompt()
@@ -85,6 +103,7 @@ public class AgentCoordinator {
                     requireClarification(decision.clarificationQuestion()),
                     conversationId.toString()
             );
+            case REPORT_METADATA_REQUEST -> reportMetadataResponse(conversationId);
             case REPORT_REQUEST, EMAIL_REQUEST -> dispatchAgent(request, decision, conversationId);
         };
 
@@ -96,13 +115,78 @@ public class AgentCoordinator {
         return response;
     }
 
+    private AgentCoordinatorResponse reportMetadataResponse(UUID conversationId) {
+        List<Artifact> reports = sharedContextService.getArtifacts(conversationId, ArtifactType.REPORT)
+                .stream()
+                .filter(artifact -> Artifact.GENERATED_PROVENANCE.equals(
+                        artifact.metadata().get(Artifact.PROVENANCE_KEY)))
+                .toList();
+
+        if (reports.isEmpty()) {
+            return AgentCoordinatorResponse.completed(
+                    IntentAction.REPORT_METADATA_REQUEST,
+                    "No generated report is available in this conversation.",
+                    conversationId.toString()
+            );
+        }
+        if (reports.size() > 1) {
+            String candidates = reports.stream()
+                    .map(artifact -> "'" + artifact.title() + "' (ID: " + artifact.id() + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            return AgentCoordinatorResponse.clarification(
+                    "Multiple reports are available. Which report do you mean? " + candidates,
+                    conversationId.toString()
+            );
+        }
+
+        Artifact report = reports.getFirst();
+        StringBuilder response = new StringBuilder()
+                .append("Report ID: ").append(report.id())
+                .append("\nTitle: ").append(report.title())
+                .append("\nCreated: ").append(report.createdAt())
+                .append("\nType: ").append(report.metadata().getOrDefault(
+                        Artifact.REPORT_TYPE_KEY, report.type().name()))
+                .append("\nAvailability: available");
+        String format = report.metadata().get(Artifact.FORMAT_KEY);
+        if (format != null && !format.isBlank()) {
+            response.append("\nFormat: ").append(format);
+        }
+        String customerCount = report.metadata().get("customerCount");
+        if (customerCount != null && !customerCount.isBlank()) {
+            response.append("\nCustomers analyzed: ").append(customerCount);
+        }
+        return AgentCoordinatorResponse.completed(
+                IntentAction.REPORT_METADATA_REQUEST,
+                response.toString(),
+                conversationId.toString()
+        );
+    }
+
     private AgentCoordinatorResponse dispatchAgent(
             AgentCoordinatorRequest request,
             IntentDecision decision,
             UUID conversationId
     ) {
         AgentTarget target = resolveTargetAgent(decision);
-        AgentResult result = executeAgent(target, request, conversationId);
+        AgentResult result;
+        if (target == AgentTarget.EMAIL && decision.reportArtifactId() != null
+                && !decision.reportArtifactId().isBlank()) {
+            Optional<ReportArtifactHandoff> reportHandoff = resolveReportHandoff(
+                    conversationId,
+                    decision.reportArtifactId()
+            );
+            if (reportHandoff.isEmpty()) {
+                return AgentCoordinatorResponse.clarification(
+                        "The requested report is not available as a registered PDF in this conversation.",
+                        conversationId.toString()
+                );
+            }
+            result = emailAgent.execute(conversationId, request, reportHandoff.get());
+        } else if (target == AgentTarget.EMAIL) {
+            result = emailAgent.execute(conversationId, request);
+        } else {
+            result = customerReportAgent.execute(conversationId, request);
+        }
         if (result == null || result.status() == null) {
             throw new IllegalStateException("Selected agent returned no valid execution status.");
         }
@@ -156,15 +240,53 @@ public class AgentCoordinator {
         return target;
     }
 
-    private AgentResult executeAgent(
-            AgentTarget target,
-            AgentCoordinatorRequest request,
-            UUID conversationId
-    ) {
-        return switch (target) {
-            case CUSTOMER_REPORT -> customerReportAgent.execute(conversationId, request);
-            case EMAIL -> emailAgent.execute(conversationId, request);
-        };
+    private String buildReportArtifactRoutingContext(UUID conversationId) {
+        List<Artifact> reports = sharedContextService.getArtifacts(conversationId, ArtifactType.REPORT)
+                .stream()
+                .filter(artifact -> Artifact.GENERATED_PROVENANCE.equals(
+                        artifact.metadata().get(Artifact.PROVENANCE_KEY)))
+                .filter(artifact -> "PDF".equalsIgnoreCase(artifact.metadata().get(Artifact.FORMAT_KEY)))
+                .toList();
+        if (reports.isEmpty()) {
+            return "";
+        }
+        StringBuilder context = new StringBuilder(
+                "Registered generated PDF report artifacts available for possible email attachment "
+                        + "(reference data only; select an exact artifact ID):\n"
+        );
+        for (Artifact report : reports) {
+            context.append("ID: ").append(report.id())
+                    .append("; title: ").append(report.title())
+                    .append("; type: ").append(report.metadata().getOrDefault(
+                            Artifact.REPORT_TYPE_KEY, "REPORT"))
+                    .append("; created: ").append(report.createdAt())
+                    .append('\n');
+        }
+        return context.toString();
+    }
+
+    private Optional<ReportArtifactHandoff> resolveReportHandoff(UUID conversationId, String artifactId) {
+        return sharedContextService.getArtifact(conversationId, artifactId)
+                .filter(artifact -> artifact.type() == ArtifactType.REPORT)
+                .filter(artifact -> Artifact.GENERATED_PROVENANCE.equals(
+                        artifact.metadata().get(Artifact.PROVENANCE_KEY)))
+                .filter(artifact -> "PDF".equalsIgnoreCase(
+                        artifact.metadata().get(Artifact.FORMAT_KEY)))
+                .filter(artifact -> artifact.metadata().containsKey(Artifact.REPORT_TYPE_KEY))
+                .filter(artifact -> {
+                    String storageReference = artifact.metadata().get(Artifact.FILE_REFERENCE_KEY);
+                    return storageReference != null && !storageReference.isBlank()
+                            && storageReference.equals(artifact.content());
+                })
+                .map(artifact -> new ReportArtifactHandoff(
+                        artifact.id(),
+                        artifact.title(),
+                        artifact.metadata().get(Artifact.REPORT_TYPE_KEY),
+                        artifact.metadata().get(Artifact.FORMAT_KEY),
+                        artifact.metadata().get(Artifact.FILE_REFERENCE_KEY),
+                        artifact.createdAt(),
+                        artifact.metadata()
+                ));
     }
 
     private String firstNonBlank(String... values) {
@@ -185,6 +307,7 @@ public class AgentCoordinator {
 
     public enum IntentAction {
         REPORT_REQUEST,
+        REPORT_METADATA_REQUEST,
         EMAIL_REQUEST,
         GENERAL_RESPONSE,
         CLARIFICATION_REQUIRED
@@ -199,10 +322,20 @@ public class AgentCoordinator {
             IntentAction action,
             String response,
             String clarificationQuestion,
-            String targetAgent
+            String targetAgent,
+            String reportArtifactId
     ) {
         public IntentDecision(IntentAction action, String response, String clarificationQuestion) {
-            this(action, response, clarificationQuestion, null);
+            this(action, response, clarificationQuestion, null, null);
+        }
+
+        public IntentDecision(
+                IntentAction action,
+                String response,
+                String clarificationQuestion,
+                String targetAgent
+        ) {
+            this(action, response, clarificationQuestion, targetAgent, null);
         }
     }
 }

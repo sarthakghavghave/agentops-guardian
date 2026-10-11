@@ -6,19 +6,27 @@ import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.ExecutionStatus;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
+import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CommunicationTools;
+import com.agentops.guardian.tool.ReportFileStorageService;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -29,6 +37,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class EmailAgentTest {
+
+    @TempDir
+    Path tempDirectory;
 
     @Test
     void llmClarificationForDraftRequestNeverCallsCommunicationTool() throws IOException {
@@ -167,21 +178,29 @@ class EmailAgentTest {
     }
 
     @Test
-    void resolvesRegisteredReportFromSameConversationWithoutRepeatingItsContent() throws IOException {
+    void validatesRegisteredReportHandoffAndPassesPdfOutOfBandAsAttachment() throws IOException {
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.defaultSystem(anyString())).thenReturn(builder);
         when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
         ChatClient client = mockClient("Tool call response.");
         when(builder.build()).thenReturn(client);
         CommunicationTools tools = mock(CommunicationTools.class);
-        when(tools.executionResults()).thenReturn(List.of(new CommunicationTools.EmailResult(
-                "report-mail-1", "operator@example.test", true, java.time.LocalDateTime.now()
-        )));
         ConversationMemory memory = new ConversationMemory();
         UUID conversationId = memory.open(null);
+        byte[] pdfBytes = validPdf();
+        ReportFileStorageService storageService = new ReportFileStorageService(tempDirectory.toString());
+        ReportFileStorageService.StoredReport stored = storageService.storePdf(pdfBytes);
+        String storedFileName = Path.of(stored.reference()).getFileName().toString();
+        when(tools.executionResults()).thenReturn(List.of(new CommunicationTools.EmailResult(
+                "report-mail-1",
+                "operator@example.test",
+                true,
+                java.time.LocalDateTime.now(),
+                storedFileName
+        )));
         Artifact report = memory.registerArtifact(
                 conversationId,
-                Artifact.generatedReport("Monthly report", "Verified monthly totals")
+                Artifact.generatedPdfReport("Monthly report", stored.reference(), stored.sizeBytes(), 42)
         );
         when(client.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
                 .thenReturn(new EmailAgent.EmailDecision(
@@ -189,29 +208,101 @@ class EmailAgentTest {
                         null,
                         "operator@example.test",
                         "Monthly report",
-                        "Please see the report below.",
+                        "Please see the attached report.",
                         true,
                         report.id()
                 ));
-        EmailAgent agent = new EmailAgent(builder, tools, mock(WorkflowContextManager.class), memory);
+        EmailAgent agent = new EmailAgent(
+                builder, tools, mock(WorkflowContextManager.class), memory, storageService
+        );
+        ReportArtifactHandoff handoff = handoff(report);
         clearInvocations(client.prompt());
 
         AgentResult result = agent.execute(
                 conversationId,
-                new AgentCoordinatorRequest("Email that report to operator@example.test", null, null)
+                new AgentCoordinatorRequest(
+                        "Email that report as an attachment to operator@example.test", null, null),
+                handoff
         );
 
         assertTrue(result.isSuccess());
         ArgumentCaptor<List<Message>> decisionInput = ArgumentCaptor.forClass(List.class);
         verify(client.prompt()).messages(decisionInput.capture());
         assertTrue(decisionInput.getValue().stream().anyMatch(message ->
-                message.getText().contains("Verified monthly totals")));
+                message.getText().contains("Monthly report")));
         assertTrue(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains(report.id())));
         ArgumentCaptor<String> toolPrompt = ArgumentCaptor.forClass(String.class);
         verify(client.prompt()).user(toolPrompt.capture());
-        assertTrue(toolPrompt.getValue().contains(report.id()));
-        assertTrue(toolPrompt.getValue().contains("Verified monthly totals"));
+        assertTrue(toolPrompt.getValue().contains(storedFileName));
+        assertFalse(toolPrompt.getValue().contains(stored.reference()));
+        assertFalse(toolPrompt.getValue().contains("%PDF-"));
+        ArgumentCaptor<CommunicationTools.EmailAttachment> attachment =
+                ArgumentCaptor.forClass(CommunicationTools.EmailAttachment.class);
+        verify(tools).setAttachmentForExecution(attachment.capture());
+        assertEquals(storedFileName, attachment.getValue().fileName());
+        assertEquals("application/pdf", attachment.getValue().contentType());
+        assertArrayEquals(pdfBytes, attachment.getValue().content());
+        verify(tools).clearAttachmentForExecution();
+    }
+
+    @Test
+    void rejectsForgedAndStaleReportHandoffsBeforeCommunication() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient client = mockClient("Tool must not run.");
+        when(builder.build()).thenReturn(client);
+        CommunicationTools tools = mock(CommunicationTools.class);
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        ReportFileStorageService storageService = new ReportFileStorageService(tempDirectory.toString());
+        ReportFileStorageService.StoredReport stored = storageService.storePdf(validPdf());
+        Artifact report = memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Monthly report", stored.reference(), stored.sizeBytes(), 42)
+        );
+        when(client.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(new EmailAgent.EmailDecision(
+                        EmailAgent.EmailDecisionOutcome.SEND,
+                        null,
+                        "operator@example.test",
+                        "Monthly report",
+                        "Please see attached.",
+                        true,
+                        report.id()
+                ));
+        EmailAgent agent = new EmailAgent(
+                builder, tools, mock(WorkflowContextManager.class), memory, storageService
+        );
+        ReportArtifactHandoff validHandoff = handoff(report);
+        ReportArtifactHandoff forged = new ReportArtifactHandoff(
+                validHandoff.artifactId(),
+                validHandoff.title(),
+                validHandoff.reportType(),
+                validHandoff.format(),
+                tempDirectory.resolve("forged.pdf").toString(),
+                validHandoff.createdAt(),
+                validHandoff.metadata()
+        );
+
+        AgentResult forgedResult = agent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Send the report attached", "operator@example.test", null),
+                forged
+        );
+        assertTrue(forgedResult.isClarification());
+        assertTrue(forgedResult.clarificationQuestion().contains("no longer available"));
+
+        Files.delete(Path.of(stored.reference()));
+        AgentResult staleResult = agent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Send the report attached", "operator@example.test", null),
+                validHandoff
+        );
+        assertTrue(staleResult.isClarification());
+        assertTrue(staleResult.clarificationQuestion().contains("no longer available"));
+        verifyNoInteractions(tools);
     }
 
     @Test
@@ -506,6 +597,26 @@ class EmailAgentTest {
                 false,
                 null
         );
+    }
+
+    private ReportArtifactHandoff handoff(Artifact report) {
+        return new ReportArtifactHandoff(
+                report.id(),
+                report.title(),
+                report.metadata().get(Artifact.REPORT_TYPE_KEY),
+                report.metadata().get(Artifact.FORMAT_KEY),
+                report.metadata().get(Artifact.FILE_REFERENCE_KEY),
+                report.createdAt(),
+                report.metadata()
+        );
+    }
+
+    private byte[] validPdf() throws IOException {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage());
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private ChatClient mockClient(String response) {
