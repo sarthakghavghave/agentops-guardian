@@ -151,6 +151,46 @@ class CustomerReportAgentTest {
     }
 
     @Test
+    void reportAgentReceivesRecentUserAndAssistantConversationContext() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        ChatClient client = mockChatClient(builder, "Assistant summary");
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        ReportTools reportTools = mock(ReportTools.class);
+        when(reportTools.executionResults()).thenReturn(java.util.List.of(
+                new ReportTools.Report(
+                        ReportTools.ReportType.ANALYTICAL,
+                        false,
+                        3,
+                        "Verified report output",
+                        "data/reports/generated.pdf",
+                        128
+                )
+        ));
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        memory.recordTurn(
+                conversationId,
+                "Generate the report for Seattle",
+                "The report was created with ID report-123."
+        );
+        CustomerReportAgent agent = new CustomerReportAgent(
+                builder, mock(CustomerDataTools.class), reportTools, manager, memory
+        );
+
+        clearInvocations(client.prompt());
+        agent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Generate another report for the same city", null, null)
+        );
+
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(client.prompt()).user(prompt.capture());
+        assertTrue(prompt.getValue().contains("User: Generate the report for Seattle"));
+        assertTrue(prompt.getValue().contains("Assistant: The report was created with ID report-123."));
+        assertTrue(prompt.getValue().contains("Generate another report for the same city"));
+    }
+
+    @Test
     void doesNotRegisterOrReportSuccessWhenAnalyticalPdfWasNotStored() throws IOException {
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         mockChatClient(builder, "Assistant summary");

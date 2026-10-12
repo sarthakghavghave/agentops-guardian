@@ -198,6 +198,11 @@ class EmailAgentTest {
                 java.time.LocalDateTime.now(),
                 storedFileName
         )));
+        memory.recordTurn(
+                conversationId,
+                "The quarterly analysis was completed.",
+                "The report artifact is ready for email handoff."
+        );
         Artifact report = memory.registerArtifact(
                 conversationId,
                 Artifact.generatedPdfReport("Monthly report", stored.reference(), stored.sizeBytes(), 42)
@@ -232,6 +237,10 @@ class EmailAgentTest {
                 message.getText().contains("Monthly report")));
         assertTrue(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains(report.id())));
+        assertTrue(decisionInput.getValue().stream().anyMatch(message ->
+                message.getText().contains("The quarterly analysis was completed.")));
+        assertTrue(decisionInput.getValue().stream().anyMatch(message ->
+                message.getText().contains("The report artifact is ready for email handoff.")));
         ArgumentCaptor<String> toolPrompt = ArgumentCaptor.forClass(String.class);
         verify(client.prompt()).user(toolPrompt.capture());
         assertTrue(toolPrompt.getValue().contains(storedFileName));

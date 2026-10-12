@@ -10,6 +10,8 @@ import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -28,7 +30,7 @@ import java.util.regex.Pattern;
 @Service
 public class ConversationMemory implements SharedContextService {
 
-    private static final int MAX_MESSAGES_PER_CONVERSATION = 12;
+    private static final int DEFAULT_MAX_MESSAGES_PER_CONVERSATION = 12;
     private static final int MAX_STORED_TURN_CHARACTERS = 4000;
     private static final int MAX_CONVERSATIONS = 500;
     private static final int MAX_EXPIRED_IDS = 1000;
@@ -51,11 +53,15 @@ public class ConversationMemory implements SharedContextService {
     private final Map<String, Map<String, Object>> sessionAttributes = new LinkedHashMap<>();
 
     public ConversationMemory() {
+        this(DEFAULT_MAX_MESSAGES_PER_CONVERSATION);
+    }
+
+    @Autowired
+    public ConversationMemory(
+            @Value("${agentops.conversation.max-messages:12}") int maxMessagesPerConversation
+    ) {
         this(
-                MessageWindowChatMemory.builder()
-                        .chatMemoryRepository(new InMemoryChatMemoryRepository())
-                        .maxMessages(MAX_MESSAGES_PER_CONVERSATION)
-                        .build(),
+                createChatMemory(maxMessagesPerConversation),
                 Clock.systemUTC(),
                 CONVERSATION_TTL,
                 MAX_CONVERSATIONS
@@ -71,6 +77,16 @@ public class ConversationMemory implements SharedContextService {
         this.clock = clock;
         this.conversationTtl = conversationTtl;
         this.maxConversations = maxConversations;
+    }
+
+    private static ChatMemory createChatMemory(int maxMessagesPerConversation) {
+        if (maxMessagesPerConversation < 1) {
+            throw new IllegalArgumentException("Conversation message limit must be positive.");
+        }
+        return MessageWindowChatMemory.builder()
+                .chatMemoryRepository(new InMemoryChatMemoryRepository())
+                .maxMessages(maxMessagesPerConversation)
+                .build();
     }
 
     @Override

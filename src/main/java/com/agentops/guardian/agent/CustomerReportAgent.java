@@ -11,8 +11,8 @@ import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ReportTools;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -186,27 +186,28 @@ public class CustomerReportAgent {
             return currentMessage;
         }
         List<Message> messages = sharedContextService.history(conversationId);
-        List<String> priorUserMessages = messages.stream()
-                .filter(UserMessage.class::isInstance)
-                .map(Message::getText)
+        List<String> recentConversation = messages.stream()
+                .map(message -> (message instanceof AssistantMessage ? "Assistant: " : "User: ")
+                        + message.getText())
                 .filter(text -> text != null && !text.isBlank())
                 .toList();
 
-        if (priorUserMessages.isEmpty()) {
+        if (recentConversation.isEmpty()) {
             return currentMessage;
         }
 
         return """
-                Use earlier user messages only to resolve references in the current request.
-                The current user request takes precedence. Do not assume any prior action succeeded.
+                Use the recent conversation only to resolve references in the current request.
+                The current user request takes precedence. Prior assistant messages are not proof
+                that an action succeeded.
 
-                Earlier user messages:
+                Recent conversation (oldest first):
                 %s
 
                 Current user request:
                 %s
                 """.formatted(
-                String.join("\n", priorUserMessages),
+                String.join("\n", recentConversation),
                 currentMessage
         );
     }

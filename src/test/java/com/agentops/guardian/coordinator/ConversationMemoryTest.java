@@ -106,6 +106,26 @@ class ConversationMemoryTest {
     }
 
     @Test
+    void configurableWindowRetainsTheNewestMessagesInChronologicalOrder() {
+        ConversationMemory memory = new ConversationMemory(4);
+        UUID conversationId = memory.open(null);
+
+        for (int turn = 0; turn < 4; turn++) {
+            memory.recordTurn(conversationId, "User " + turn, "Assistant " + turn);
+        }
+
+        List<Message> history = memory.history(conversationId);
+        assertEquals(4, history.size());
+        assertEquals(List.of("User 2", "Assistant 2", "User 3", "Assistant 3"),
+                history.stream().map(Message::getText).toList());
+    }
+
+    @Test
+    void rejectsNonPositiveConfiguredMessageLimit() {
+        assertThrows(IllegalArgumentException.class, () -> new ConversationMemory(0));
+    }
+
+    @Test
     void boundsEachStoredMessageLength() {
         ConversationMemory memory = newMemory(new MutableClock(Instant.parse("2026-10-09T12:00:00Z")), 10);
         UUID conversationId = memory.open(null);
