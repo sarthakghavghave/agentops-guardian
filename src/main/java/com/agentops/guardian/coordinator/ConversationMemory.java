@@ -140,7 +140,7 @@ public class ConversationMemory implements SharedContextService {
         List<Message> turn = new ArrayList<>(2);
         turn.add(new UserMessage(sanitize(userMessage)));
         if (assistantContext != null && !assistantContext.isBlank()) {
-            turn.add(new AssistantMessage(sanitize(assistantContext)));
+            turn.add(new AssistantMessage(bound(assistantContext)));
         }
         chatMemory.add(key, turn);
     }
@@ -375,14 +375,18 @@ public class ConversationMemory implements SharedContextService {
     }
 
     private String sanitize(String value) {
+        String bounded = bound(value);
+        return PHONE_PATTERN.matcher(EMAIL_PATTERN.matcher(bounded).replaceAll(REDACTED))
+                .replaceAll(REDACTED);
+    }
+
+    private String bound(String value) {
         if (value == null) {
             return "";
         }
-        String bounded = value.length() > MAX_STORED_TURN_CHARACTERS
+        return value.length() > MAX_STORED_TURN_CHARACTERS
                 ? value.substring(0, MAX_STORED_TURN_CHARACTERS)
                 : value;
-        return PHONE_PATTERN.matcher(EMAIL_PATTERN.matcher(bounded).replaceAll(REDACTED))
-                .replaceAll(REDACTED);
     }
 
     public static class ConversationException extends RuntimeException {

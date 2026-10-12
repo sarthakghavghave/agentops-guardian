@@ -1,6 +1,7 @@
 package com.agentops.guardian.coordinator;
 
 import com.agentops.guardian.agent.CustomerReportAgent;
+import com.agentops.guardian.agent.CustomerSupportAgent;
 import com.agentops.guardian.agent.EmailAgent;
 import com.agentops.guardian.coordinator.agent.AgentResult;
 import com.agentops.guardian.coordinator.context.Artifact;
@@ -28,9 +29,15 @@ public class AgentCoordinator {
             or CLARIFICATION_REQUIRED.
 
             Registered agents:
-            - CustomerReportAgent (REPORT_REQUEST): create or regenerate customer reports only.
+            - CustomerReportAgent (REPORT_REQUEST): create or regenerate analytical reports only.
+            - CustomerSupportAgent (GENERAL_RESPONSE): normal conversation and supported customer,
+              order, or product information retrieval.
             - EmailAgent (EMAIL_REQUEST): email composition and sending.
 
+            Use REPORT_REQUEST only when the user explicitly asks to create, generate, or regenerate
+            an analytical report. Requests to retrieve customer data or records, including requests
+            such as "give me data of customers in North Michael", are GENERAL_RESPONSE, not report
+            generation. CustomerSupportAgent can use its registered retrieval tools for these tasks.
             Questions about reports already created in this conversation, such as asking
             for a report ID, title, creation date, details, or whether a report is available,
             must use REPORT_METADATA_REQUEST. Never route those questions to report generation.
@@ -51,17 +58,20 @@ public class AgentCoordinator {
 
     private final ChatClient intentClient;
     private final CustomerReportAgent customerReportAgent;
+    private final CustomerSupportAgent customerSupportAgent;
     private final EmailAgent emailAgent;
     private final SharedContextService sharedContextService;
 
     public AgentCoordinator(
             ChatClient.Builder chatClientBuilder,
             CustomerReportAgent customerReportAgent,
+            CustomerSupportAgent customerSupportAgent,
             EmailAgent emailAgent,
             SharedContextService sharedContextService
     ) {
         this.intentClient = chatClientBuilder.build();
         this.customerReportAgent = customerReportAgent;
+        this.customerSupportAgent = customerSupportAgent;
         this.emailAgent = emailAgent;
         this.sharedContextService = sharedContextService;
     }
@@ -94,11 +104,7 @@ public class AgentCoordinator {
         }
 
         AgentCoordinatorResponse response = switch (decision.action()) {
-            case GENERAL_RESPONSE -> AgentCoordinatorResponse.completed(
-                    IntentAction.GENERAL_RESPONSE,
-                    firstNonBlank(decision.response(), "I can generate a customer report or send an email."),
-                    conversationId.toString()
-            );
+            case GENERAL_RESPONSE -> generalResponse(request, conversationId);
             case CLARIFICATION_REQUIRED -> AgentCoordinatorResponse.clarification(
                     requireClarification(decision.clarificationQuestion()),
                     conversationId.toString()
@@ -113,6 +119,18 @@ public class AgentCoordinator {
                 response.response()
         );
         return response;
+    }
+
+    private AgentCoordinatorResponse generalResponse(AgentCoordinatorRequest request, UUID conversationId) {
+        String supportResponse = customerSupportAgent.chat(conversationId, request.message());
+        if (supportResponse == null || supportResponse.isBlank()) {
+            throw new IllegalStateException("Customer support agent returned no response.");
+        }
+        return AgentCoordinatorResponse.completed(
+                IntentAction.GENERAL_RESPONSE,
+                supportResponse,
+                conversationId.toString()
+        );
     }
 
     private AgentCoordinatorResponse reportMetadataResponse(UUID conversationId) {

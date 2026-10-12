@@ -116,6 +116,57 @@ class EmailAgentTest {
     }
 
     @Test
+    void laterEmailDecisionCanUseUnredactedCustomerDetailsFromSharedHistoryThroughGovernedSend()
+            throws IOException {
+        String customerEmail = "alex.morgan@example.test";
+        String customerResponse = "Customer: Alex Morgan; Email: " + customerEmail
+                + "; City: North Michael.";
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient chatClient = mockClient("Tool invocation result.");
+        when(builder.build()).thenReturn(chatClient);
+        when(chatClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(sendDecision(
+                        customerEmail,
+                        "Customer follow-up",
+                        "Following up with Alex Morgan at " + customerEmail + "."
+                ));
+        CommunicationTools tools = mock(CommunicationTools.class);
+        when(tools.executionResults()).thenReturn(List.of(new CommunicationTools.EmailResult(
+                "customer-email-accepted",
+                customerEmail,
+                true,
+                java.time.LocalDateTime.now()
+        )));
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        memory.recordTurn(conversationId, "Find Alex Morgan's customer record", customerResponse);
+        EmailAgent agent = new EmailAgent(builder, tools, manager, memory);
+        clearInvocations(chatClient.prompt());
+
+        AgentResult result = agent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Email Alex about the account", null, null)
+        );
+
+        assertTrue(result.isSuccess());
+        ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
+        verify(chatClient.prompt()).messages(messages.capture());
+        assertTrue(messages.getValue().stream().anyMatch(message ->
+                message.getText().equals(customerResponse)));
+        verify(manager).start(
+                eq("EmailAgent"),
+                eq(WorkflowType.EMAIL_COMMUNICATION),
+                argThat(goal -> goal.contains(customerEmail))
+        );
+        verify(tools).beginExecution();
+        verify(tools).executionResults();
+        verify(tools).clearExecutionResult();
+    }
+
+    @Test
     void llmRefusalAndUnsupportedDecisionsNeverInvokeCommunicationTool() throws IOException {
         assertNonSendDecisionDoesNotCallTool(new EmailAgent.EmailDecision(
                 EmailAgent.EmailDecisionOutcome.CLARIFICATION_REQUIRED,

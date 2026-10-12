@@ -106,6 +106,27 @@ class ConversationMemoryTest {
     }
 
     @Test
+    void preservesAssistantResponsePiiVerbatimButContinuesSanitizingUserMessages() {
+        ConversationMemory memory = newMemory(new MutableClock(Instant.parse("2026-10-09T12:00:00Z")), 10);
+        UUID conversationId = memory.open(null);
+        String customerEmail = "alex.morgan@example.test";
+        String assistantResponse = "Customer: Alex Morgan; Email: " + customerEmail
+                + "; Phone: +1 555-234-6789; City: North Michael.";
+
+        memory.recordTurn(
+                conversationId,
+                "Look up alex.morgan@example.test at +1 555-234-6789",
+                assistantResponse
+        );
+
+        List<Message> history = memory.history(conversationId);
+        assertTrue(history.getFirst().getText().contains("[redacted]"));
+        assertEquals(assistantResponse, history.getLast().getText());
+        assertTrue(history.getLast().getText().contains(customerEmail));
+        assertTrue(history.getLast().getText().contains("+1 555-234-6789"));
+    }
+
+    @Test
     void configurableWindowRetainsTheNewestMessagesInChronologicalOrder() {
         ConversationMemory memory = new ConversationMemory(4);
         UUID conversationId = memory.open(null);

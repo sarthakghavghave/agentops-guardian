@@ -1,6 +1,7 @@
 package com.agentops.guardian.coordinator;
 
 import com.agentops.guardian.agent.CustomerReportAgent;
+import com.agentops.guardian.agent.CustomerSupportAgent;
 import com.agentops.guardian.agent.EmailAgent;
 import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
@@ -44,6 +45,7 @@ class SharedContextAndAgentArchitectureTest {
     private WorkflowContextManager workflowContextManager;
     private ConversationMemory memory;
     private CustomerReportAgent reportAgent;
+    private CustomerSupportAgent customerSupportAgent;
     private EmailAgent emailAgent;
     private AgentCoordinator coordinator;
 
@@ -70,8 +72,9 @@ class SharedContextAndAgentArchitectureTest {
         memory = new ConversationMemory();
 
         reportAgent = spy(new CustomerReportAgent(builder, customerDataTools, reportTools, workflowContextManager, memory));
+        customerSupportAgent = mock(CustomerSupportAgent.class);
         emailAgent = spy(new EmailAgent(builder, communicationTools, workflowContextManager, memory));
-        coordinator = new AgentCoordinator(builder, reportAgent, emailAgent, memory);
+        coordinator = new AgentCoordinator(builder, reportAgent, customerSupportAgent, emailAgent, memory);
     }
 
     private void mockIntentDecision(AgentCoordinator.IntentDecision decision) {
@@ -314,8 +317,10 @@ class SharedContextAndAgentArchitectureTest {
     @Test
     void successfulAssistantResponsesRecordedForFollowUpContext() {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
-                AgentCoordinator.IntentAction.GENERAL_RESPONSE, "Hello, how can I help you today?", null
+                AgentCoordinator.IntentAction.GENERAL_RESPONSE, null, null
         ));
+        when(customerSupportAgent.chat(any(UUID.class), eq("Hello there")))
+                .thenReturn("Hello, how can I help you today?");
 
         AgentCoordinatorResponse response = coordinator.handle(
                 new AgentCoordinatorRequest("Hello there", null, null)

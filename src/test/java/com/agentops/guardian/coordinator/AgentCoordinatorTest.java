@@ -1,6 +1,7 @@
 package com.agentops.guardian.coordinator;
 
 import com.agentops.guardian.agent.CustomerReportAgent;
+import com.agentops.guardian.agent.CustomerSupportAgent;
 import com.agentops.guardian.agent.EmailAgent;
 import com.agentops.guardian.coordinator.agent.AgentResult;
 import com.agentops.guardian.coordinator.context.Artifact;
@@ -104,13 +105,54 @@ class AgentCoordinatorTest {
         fixture.verifiedGeneratedReport("Verified report output");
 
         AgentCoordinatorResponse response = fixture.coordinator.handle(
-                new AgentCoordinatorRequest("Create a new customer report", null, null)
+                new AgentCoordinatorRequest("Generate an analytical customer report for North Michael", null, null)
         );
 
         assertFalse(response.clarificationRequired());
         assertTrue(response.response().contains("Analytical customer report PDF saved"));
         verify(fixture.reportAgent).execute(any(), any());
-        verifyNoInteractions(fixture.emailAgent);
+        verifyNoInteractions(fixture.emailAgent, fixture.customerSupportAgent);
+    }
+
+    @Test
+    void customerDataQuestionUsesSupportRetrievalWithoutGeneratingReport() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.GENERAL_RESPONSE));
+        when(fixture.customerSupportAgent.chat(any(UUID.class), anyString()))
+                .thenReturn("Customer data for North Michael: 12 matching records.");
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("give me data of customers in North Michael", null, null)
+        );
+
+        assertFalse(response.clarificationRequired());
+        assertEquals("Customer data for North Michael: 12 matching records.", response.response());
+        verify(fixture.customerSupportAgent).chat(any(UUID.class),
+                eq("give me data of customers in North Michael"));
+        verifyNoInteractions(fixture.reportAgent, fixture.emailAgent);
+
+        ArgumentCaptor<String> routingPrompt = ArgumentCaptor.forClass(String.class);
+        verify(fixture.requestSpec).system(routingPrompt.capture());
+        String normalizedPrompt = routingPrompt.getValue().replaceAll("\\s+", " ");
+        assertTrue(normalizedPrompt.contains("not report generation"));
+        assertTrue(normalizedPrompt.contains("CustomerSupportAgent can use its registered retrieval tools"));
+    }
+
+    @Test
+    void recordsActualCustomerSupportResponseIncludingRetrievedCustomerEmail() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.GENERAL_RESPONSE));
+        String customerEmail = "alex.morgan@example.test";
+        String retrievedResponse = "Customer: Alex Morgan; Email: " + customerEmail
+                + "; City: North Michael.";
+        when(fixture.customerSupportAgent.chat(any(UUID.class), anyString()))
+                .thenReturn(retrievedResponse);
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Find Alex Morgan's customer record", null, null)
+        );
+
+        UUID conversationId = UUID.fromString(response.conversationId());
+        assertEquals(retrievedResponse, response.response());
+        assertEquals(retrievedResponse, fixture.memory.history(conversationId).getLast().getText());
     }
 
     @Test
@@ -307,8 +349,10 @@ class AgentCoordinatorTest {
     @Test
     void successAndClarificationAssistantTurnsAreStoredButIsolated() {
         Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
-                AgentCoordinator.IntentAction.GENERAL_RESPONSE, "How can I help?", null
+                AgentCoordinator.IntentAction.GENERAL_RESPONSE, null, null
         ));
+        when(fixture.customerSupportAgent.chat(any(UUID.class), eq("Hello")))
+                .thenReturn("How can I help?");
         AgentCoordinatorResponse response = fixture.coordinator.handle(
                 new AgentCoordinatorRequest("Hello", null, null)
         );
@@ -354,6 +398,7 @@ class AgentCoordinatorTest {
         private final ChatClient.CallResponseSpec callResponseSpec = mock(ChatClient.CallResponseSpec.class);
         private final ChatClient.Builder builder = mock(ChatClient.Builder.class);
         private final CustomerReportAgent reportAgent = mock(CustomerReportAgent.class);
+        private final CustomerSupportAgent customerSupportAgent = mock(CustomerSupportAgent.class);
         private final EmailAgent emailAgent = mock(EmailAgent.class);
         private final ConversationMemory memory = new ConversationMemory();
         private final ReportTools reportTools = mock(ReportTools.class);
@@ -382,7 +427,7 @@ class AgentCoordinatorTest {
             } catch (IOException ex) {
                 throw new IllegalStateException(ex);
             }
-            coordinator = new AgentCoordinator(builder, reportAgent, emailAgent, memory);
+            coordinator = new AgentCoordinator(builder, reportAgent, customerSupportAgent, emailAgent, memory);
             decision(decision);
         }
 
