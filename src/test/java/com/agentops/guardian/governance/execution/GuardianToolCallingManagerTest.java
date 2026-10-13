@@ -107,7 +107,7 @@ class GuardianToolCallingManagerTest {
     }
 
     @Test
-    void recordsAuditEventsAndAdvancesAfterSuccessfulExecution() {
+    void doesNotTreatMatchingToolResponseAsVerifiedCustomerDataSuccess() {
         String toolCallId = "call-1";
         when(delegate.executeToolCalls(any(), any())).thenReturn(
                 successfulResult(toolCallId)
@@ -116,7 +116,7 @@ class GuardianToolCallingManagerTest {
         guardian.executeToolCalls(prompt, chatResponse(toolCallId));
 
         verify(delegate, times(1)).executeToolCalls(eq(prompt), any(ChatResponse.class));
-        assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+        assertEquals("START", workflowContext.getCurrentNodeId());
 
         verify(auditService).record(argThat(event ->
                 event.eventType() == AuditEventType.PROPOSED_ACTION
@@ -127,7 +127,7 @@ class GuardianToolCallingManagerTest {
                 event.eventType() == AuditEventType.POLICY_DECISION
                         && event.policyDecision() == GovernanceDecision.DecisionType.ALLOW
         ));
-        verify(auditService).record(argThat(event ->
+        verify(auditService, never()).record(argThat(event ->
                 event.eventType() == AuditEventType.EXECUTION_OUTCOME
                         && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
         ));
@@ -136,7 +136,7 @@ class GuardianToolCallingManagerTest {
                         && event.riskLevel() == RiskLevel.LOW
                         && event.intervention() == GovernanceIntervention.NONE
         ));
-        verify(auditService).record(argThat(event ->
+        verify(auditService, never()).record(argThat(event ->
                 event.eventType() == AuditEventType.WORKFLOW_TRANSITION
                         && event.nodeBefore() != null
                         && event.nodeAfter() != null
@@ -145,7 +145,7 @@ class GuardianToolCallingManagerTest {
     }
 
     @Test
-    void blankProviderIdGetsGuardianIdAndLowRiskCallStillCorrelates() {
+    void blankProviderIdGetsGuardianIdButResponseAloneDoesNotConfirmSuccess() {
         when(delegate.executeToolCalls(any(), any())).thenReturn(successfulResult("", "getCustomerData"));
         AssistantMessage.ToolCall call = new AssistantMessage.ToolCall(
                 "", "function", "getCustomerData", "{}"
@@ -164,8 +164,8 @@ class GuardianToolCallingManagerTest {
         assertFalse(guardianCallId.isBlank());
         assertEquals(guardianCallId, workflowContext.getToolCalls().getFirst().toolCallId());
         assertEquals(guardianCallId, workflowContext.getActions().getFirst().providerToolCallId());
-        assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
-        assertEquals(1, auditEvents.getAllValues().stream()
+        assertEquals("START", workflowContext.getCurrentNodeId());
+        assertEquals(0, auditEvents.getAllValues().stream()
                 .filter(event -> event.eventType() == AuditEventType.EXECUTION_OUTCOME
                         && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
                         && guardianCallId.equals(event.toolCallId()))

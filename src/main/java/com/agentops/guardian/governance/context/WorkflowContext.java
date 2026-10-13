@@ -3,6 +3,7 @@ package com.agentops.guardian.governance.context;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.DataTransformation;
 import com.agentops.guardian.governance.model.ToolCallEvent;
+import com.agentops.guardian.governance.model.ToolInvocationOutcome;
 import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
@@ -35,6 +36,7 @@ public class WorkflowContext {
     private String currentNodeId;
 
     private final List<ToolCallEvent> toolCalls = new ArrayList<>();
+    private final List<ToolInvocationOutcome<?>> toolInvocationOutcomes = new ArrayList<>();
     private final List<WorkflowAction> actions = new ArrayList<>();
     private final Map<String, Object> data = new HashMap<>();
 
@@ -80,6 +82,18 @@ public class WorkflowContext {
             throw new IllegalArgumentException("Tool call event cannot be null.");
         }
         toolCalls.add(event);
+    }
+
+    public void recordToolInvocationOutcome(ToolInvocationOutcome<?> outcome) {
+        ensureRunning();
+        if (outcome == null) {
+            throw new IllegalArgumentException("Tool invocation outcome cannot be null.");
+        }
+        toolInvocationOutcomes.add(outcome);
+    }
+
+    public List<ToolInvocationOutcome<?>> getToolInvocationOutcomes() {
+        return List.copyOf(toolInvocationOutcomes);
     }
 
     public void addAction(WorkflowAction action) {

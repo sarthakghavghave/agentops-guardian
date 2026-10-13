@@ -5,6 +5,7 @@ import com.agentops.guardian.domain.order.Order;
 import com.agentops.guardian.domain.order.OrderItem;
 import com.agentops.guardian.domain.product.Product;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.execution.ToolInvocationCorrelation;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.service.CustomerService;
 import lombok.RequiredArgsConstructor;
@@ -19,11 +20,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CustomerDataTools {
 
+        public static final String TOOL_NAME = "getCustomerData";
         private static final int MAX_CUSTOMERS_PER_REQUEST = 100;
 
         private final CustomerService customerService;
         private final ToolDataStore toolDataStore;
         private final WorkflowContextManager workflowContextManager;
+        private final ToolInvocationCorrelation toolInvocationCorrelation;
 
         @Tool(description = """
                         Retrieves the underlying customer and order records for a specified
@@ -65,6 +68,7 @@ public class CustomerDataTools {
 
                 toolDataStore.storeCustomerData(data);
                 workflowContextManager.current().markDataAcquired(DataClassification.RAW_CUSTOMER_DATA);
+                toolInvocationCorrelation.recordCustomerDataResult(data);
 
                 return data;
         }
