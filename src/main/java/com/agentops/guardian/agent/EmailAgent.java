@@ -187,7 +187,7 @@ public class EmailAgent {
 
         try {
             String result = process(new EmailRequest(
-                    recipient, decision.subject(), decision.body(), report, attachment));
+                    recipient, decision.subject(), decision.body(), report, attachment), conversationId);
             if (sharedContextService != null && conversationId != null) {
                 sharedContextService.recordExecution(
                         conversationId,
@@ -226,9 +226,22 @@ public class EmailAgent {
     }
 
     public String process(EmailRequest request) {
+        return process(request, null);
+    }
+
+    public String process(EmailRequest request, UUID conversationId) {
         validate(request);
         String prompt = buildToolPrompt(request);
-        workflowContextManager.start("EmailAgent", WorkflowType.EMAIL_COMMUNICATION, prompt);
+        if (conversationId == null) {
+            workflowContextManager.start("EmailAgent", WorkflowType.EMAIL_COMMUNICATION, prompt);
+        } else {
+            workflowContextManager.start(
+                    "EmailAgent",
+                    WorkflowType.EMAIL_COMMUNICATION,
+                    prompt,
+                    conversationId
+            );
+        }
         communicationTools.beginExecution();
         communicationTools.setAttachmentForExecution(request.attachment());
         try {

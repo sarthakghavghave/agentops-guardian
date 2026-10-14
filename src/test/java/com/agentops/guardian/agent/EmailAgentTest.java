@@ -159,7 +159,8 @@ class EmailAgentTest {
         verify(manager).start(
                 eq("EmailAgent"),
                 eq(WorkflowType.EMAIL_COMMUNICATION),
-                argThat(goal -> goal.contains(customerEmail))
+                argThat(goal -> goal.contains(customerEmail)),
+                eq(conversationId)
         );
         verify(tools).beginExecution();
         verify(tools).executionResults();

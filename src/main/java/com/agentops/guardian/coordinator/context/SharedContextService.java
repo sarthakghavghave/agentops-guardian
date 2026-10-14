@@ -33,6 +33,10 @@ public interface SharedContextService {
 
     Optional<ExecutionRecord> getLatestExecution(UUID conversationId);
 
+    void recordVerifiedCustomerRead(VerifiedCustomerReadEvidence evidence);
+
+    List<VerifiedCustomerReadEvidence> getVerifiedCustomerReads(UUID conversationId);
+
     // 4. Session metadata
     void setSessionAttribute(UUID conversationId, String key, Object value);
 

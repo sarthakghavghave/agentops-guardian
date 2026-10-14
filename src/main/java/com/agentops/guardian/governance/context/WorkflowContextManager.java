@@ -6,6 +6,8 @@ import com.agentops.guardian.governance.workflow.WorkflowType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Component
 @RequiredArgsConstructor
 public class WorkflowContextManager {
@@ -18,6 +20,15 @@ public class WorkflowContextManager {
             WorkflowType workflowType,
             String goal
     ) {
+        return start(agentName, workflowType, goal, null);
+    }
+
+    public WorkflowContext start(
+            String agentName,
+            WorkflowType workflowType,
+            String goal,
+            UUID conversationId
+    ) {
         if (contextHolder.getCurrentWorkflow() != null) {
             throw new IllegalStateException("A workflow is already active on this thread.");
         }
@@ -28,7 +39,8 @@ public class WorkflowContextManager {
                 agentName,
                 workflowType,
                 goal,
-                definition
+                definition,
+                conversationId
         );
     }
 

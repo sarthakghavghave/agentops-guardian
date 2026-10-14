@@ -26,6 +26,7 @@ public class WorkflowContext {
     private final String workflowId;
     private final String agentName;
     private final WorkflowType workflowType;
+    private final UUID conversationId;
     private final String goal;
     private final WorkflowDefinition workflowDefinition;
     private final Instant startedAt;
@@ -49,6 +50,16 @@ public class WorkflowContext {
             String goal,
             WorkflowDefinition workflowDefinition
     ) {
+        this(agentName, workflowType, goal, workflowDefinition, null);
+    }
+
+    public WorkflowContext(
+            String agentName,
+            WorkflowType workflowType,
+            String goal,
+            WorkflowDefinition workflowDefinition,
+            UUID conversationId
+    ) {
         if (agentName == null || agentName.isBlank()) {
             throw new IllegalArgumentException("Agent name is required.");
         }
@@ -68,6 +79,7 @@ public class WorkflowContext {
         this.workflowId = UUID.randomUUID().toString();
         this.agentName = agentName;
         this.workflowType = workflowType;
+        this.conversationId = conversationId;
         this.goal = goal;
         this.workflowDefinition = workflowDefinition;
         this.startedAt = Instant.now();

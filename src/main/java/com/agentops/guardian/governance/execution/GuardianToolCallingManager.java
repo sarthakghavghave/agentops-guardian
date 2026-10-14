@@ -21,6 +21,8 @@ import com.agentops.guardian.governance.model.WorkflowAction;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.coordinator.context.SharedContextService;
+import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
 
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -54,6 +56,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final RiskEvaluator riskEvaluator;
     private final InterventionService interventionService;
     private final ToolInvocationCorrelation toolInvocationCorrelation;
+    private final SharedContextService sharedContextService;
 
     @Autowired
     public GuardianToolCallingManager(
@@ -63,7 +66,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             AuditService auditService,
             RiskEvaluator riskEvaluator,
             InterventionService interventionService,
-            ToolInvocationCorrelation toolInvocationCorrelation) {
+            ToolInvocationCorrelation toolInvocationCorrelation,
+            SharedContextService sharedContextService) {
         this(
                 workflowContextManager,
                 policyEngine,
@@ -74,7 +78,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 auditService,
                 riskEvaluator,
                 interventionService,
-                toolInvocationCorrelation
+                toolInvocationCorrelation,
+                sharedContextService
         );
     }
 
@@ -148,7 +153,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 auditService,
                 riskEvaluator,
                 interventionService,
-                new ToolInvocationCorrelation(io.micrometer.observation.ObservationRegistry.NOOP)
+                new ToolInvocationCorrelation(io.micrometer.observation.ObservationRegistry.NOOP),
+                null
         );
     }
 
@@ -161,6 +167,29 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             RiskEvaluator riskEvaluator,
             InterventionService interventionService,
             ToolInvocationCorrelation toolInvocationCorrelation) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                riskEvaluator,
+                interventionService,
+                toolInvocationCorrelation,
+                null
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService,
+            RiskEvaluator riskEvaluator,
+            InterventionService interventionService,
+            ToolInvocationCorrelation toolInvocationCorrelation,
+            SharedContextService sharedContextService) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
@@ -169,6 +198,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         this.riskEvaluator = riskEvaluator;
         this.interventionService = interventionService;
         this.toolInvocationCorrelation = toolInvocationCorrelation;
+        this.sharedContextService = sharedContextService;
     }
 
     @Override
@@ -407,6 +437,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     }
                 }
 
+                recordVerifiedCustomerReadEvidence(workflowContext, invocationOutcomes);
                 return result;
             } catch (RuntimeException ex) {
                 if (delegateCompleted) {
@@ -465,6 +496,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                             null
                     ));
                 }
+                recordVerifiedCustomerReadEvidence(workflowContext, invocationOutcomes);
                 throw ex;
             }
         }
@@ -504,6 +536,41 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 nodeBefore.state(),
                 nodeAfter.state()
         ));
+    }
+
+    private void recordVerifiedCustomerReadEvidence(
+            WorkflowContext workflowContext,
+            Map<String, ToolInvocationOutcome<?>> invocationOutcomes
+    ) {
+        if (sharedContextService == null || workflowContext.getConversationId() == null) {
+            return;
+        }
+
+        invocationOutcomes.values().stream()
+                .filter(outcome -> outcome.status() == ToolInvocationOutcome.Status.SUCCEEDED)
+                .filter(outcome -> CustomerDataTools.TOOL_NAME.equals(outcome.toolName()))
+                .filter(outcome -> outcome.typedResult() instanceof CustomerDataTools.CustomerDataSet)
+                .map(outcome -> {
+                    CustomerDataTools.CustomerDataSet data =
+                            (CustomerDataTools.CustomerDataSet) outcome.typedResult();
+                    List<String> customerEmails = data.customers() == null
+                            ? List.of()
+                            : data.customers().stream()
+                            .map(CustomerDataTools.CustomerRecord::email)
+                            .filter(email -> email != null && !email.isBlank())
+                            .distinct()
+                            .toList();
+                    return new VerifiedCustomerReadEvidence(
+                            workflowContext.getConversationId(),
+                            workflowContext.getWorkflowId(),
+                            outcome.toolCallId(),
+                            WorkflowCapability.READ_CUSTOMER_DATA,
+                            outcome.status(),
+                            outcome.completedAt(),
+                            customerEmails
+                    );
+                })
+                .forEach(sharedContextService::recordVerifiedCustomerRead);
     }
 
     @Override

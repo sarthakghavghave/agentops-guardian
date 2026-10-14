@@ -4,6 +4,7 @@ import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.ExecutionRecord;
 import com.agentops.guardian.coordinator.context.SharedContextService;
+import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
@@ -50,6 +51,7 @@ public class ConversationMemory implements SharedContextService {
     private final LinkedHashMap<String, Instant> expiredConversations = new LinkedHashMap<>();
     private final Map<String, LinkedHashMap<String, Artifact>> conversationArtifacts = new LinkedHashMap<>();
     private final Map<String, List<ExecutionRecord>> conversationExecutions = new LinkedHashMap<>();
+    private final Map<String, List<VerifiedCustomerReadEvidence>> verifiedCustomerReads = new LinkedHashMap<>();
     private final Map<String, Map<String, Object>> sessionAttributes = new LinkedHashMap<>();
 
     public ConversationMemory() {
@@ -242,6 +244,26 @@ public class ConversationMemory implements SharedContextService {
         return Optional.of(records.getLast());
     }
 
+    @Override
+    public synchronized void recordVerifiedCustomerRead(VerifiedCustomerReadEvidence evidence) {
+        if (evidence == null) {
+            throw new IllegalArgumentException("Verified customer-read evidence is required.");
+        }
+        String key = requireConversation(evidence.conversationId());
+        List<VerifiedCustomerReadEvidence> evidenceForConversation =
+                verifiedCustomerReads.computeIfAbsent(key, ignored -> new ArrayList<>());
+        if (!evidenceForConversation.contains(evidence)) {
+            evidenceForConversation.add(evidence);
+        }
+    }
+
+    @Override
+    public synchronized List<VerifiedCustomerReadEvidence> getVerifiedCustomerReads(UUID conversationId) {
+        String key = requireConversation(conversationId);
+        List<VerifiedCustomerReadEvidence> evidence = verifiedCustomerReads.get(key);
+        return evidence == null ? List.of() : List.copyOf(evidence);
+    }
+
     // --- Session Metadata ---
 
     @Override
@@ -367,6 +389,7 @@ public class ConversationMemory implements SharedContextService {
         chatMemory.clear(key);
         conversationArtifacts.remove(key);
         conversationExecutions.remove(key);
+        verifiedCustomerReads.remove(key);
         sessionAttributes.remove(key);
         expiredConversations.put(key, now);
         while (expiredConversations.size() > MAX_EXPIRED_IDS) {

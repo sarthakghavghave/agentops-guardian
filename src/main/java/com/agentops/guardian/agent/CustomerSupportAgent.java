@@ -64,11 +64,20 @@ public class CustomerSupportAgent {
     }
 
     public String chat(UUID conversationId, String message) {
-        workflowContextManager.start(
-                "CustomerSupportAgent",
-                WorkflowType.CUSTOMER_SUPPORT,
-                message
-        );
+        if (conversationId == null) {
+            workflowContextManager.start(
+                    "CustomerSupportAgent",
+                    WorkflowType.CUSTOMER_SUPPORT,
+                    message
+            );
+        } else {
+            workflowContextManager.start(
+                    "CustomerSupportAgent",
+                    WorkflowType.CUSTOMER_SUPPORT,
+                    message,
+                    conversationId
+            );
+        }
 
         try {
             ChatClient.ChatClientRequestSpec prompt = chatClient.prompt();

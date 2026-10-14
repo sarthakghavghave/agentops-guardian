@@ -2,6 +2,9 @@ package com.agentops.guardian.coordinator;
 
 import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
+import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
+import com.agentops.guardian.governance.model.ToolInvocationOutcome;
+import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
@@ -12,6 +15,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -193,12 +197,70 @@ class ConversationMemoryTest {
         );
     }
 
+    @Test
+    void verifiedCustomerReadsAreIsolatedAndAvailableWithinTheirConversation() {
+        ConversationMemory memory = newMemory(new MutableClock(Instant.parse("2026-10-09T12:00:00Z")), 10);
+        UUID owner = memory.open(null);
+        UUID other = memory.open(null);
+        VerifiedCustomerReadEvidence evidence =
+                verifiedRead(owner, "workflow-1", "call-1", "customer@example.test");
+
+        memory.recordVerifiedCustomerRead(evidence);
+
+        assertEquals(List.of(evidence), memory.getVerifiedCustomerReads(owner));
+        assertTrue(memory.getVerifiedCustomerReads(other).isEmpty());
+        assertThrows(UnsupportedOperationException.class,
+                () -> memory.getVerifiedCustomerReads(owner).add(evidence));
+    }
+
+    @Test
+    void verifiedCustomerReadsAreInvalidatedWhenConversationExpiresOrIsEvicted() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-09T12:00:00Z"));
+        ConversationMemory expiringMemory = newMemory(clock, 10);
+        UUID expiringConversation = expiringMemory.open(null);
+        expiringMemory.recordVerifiedCustomerRead(
+                verifiedRead(expiringConversation, "workflow-expiring", "call-1", "a@example.test")
+        );
+        clock.advance(Duration.ofMinutes(11));
+        assertThrows(ConversationMemory.ConversationException.class,
+                () -> expiringMemory.getVerifiedCustomerReads(expiringConversation));
+        assertThrows(ConversationMemory.ConversationException.class,
+                () -> expiringMemory.open(expiringConversation.toString()));
+
+        ConversationMemory capacityLimitedMemory = newMemory(clock, 1);
+        UUID evictedConversation = capacityLimitedMemory.open(null);
+        capacityLimitedMemory.recordVerifiedCustomerRead(
+                verifiedRead(evictedConversation, "workflow-evicted", "call-2", "b@example.test")
+        );
+        UUID remainingConversation = capacityLimitedMemory.open(null);
+        assertTrue(capacityLimitedMemory.getVerifiedCustomerReads(remainingConversation).isEmpty());
+        assertThrows(ConversationMemory.ConversationException.class,
+                () -> capacityLimitedMemory.getVerifiedCustomerReads(evictedConversation));
+    }
+
     private ConversationMemory newMemory(MutableClock clock, int maxConversations) {
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
                 .chatMemoryRepository(new InMemoryChatMemoryRepository())
                 .maxMessages(12)
                 .build();
         return new ConversationMemory(chatMemory, clock, Duration.ofMinutes(10), maxConversations);
+    }
+
+    private VerifiedCustomerReadEvidence verifiedRead(
+            UUID conversationId,
+            String workflowId,
+            String callId,
+            String email
+    ) {
+        return new VerifiedCustomerReadEvidence(
+                conversationId,
+                workflowId,
+                callId,
+                WorkflowCapability.READ_CUSTOMER_DATA,
+                ToolInvocationOutcome.Status.SUCCEEDED,
+                Instant.now().truncatedTo(ChronoUnit.MILLIS),
+                List.of(email)
+        );
     }
 
     private static class MutableClock extends Clock {

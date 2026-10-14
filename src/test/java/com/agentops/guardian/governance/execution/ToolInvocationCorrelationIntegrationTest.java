@@ -1,5 +1,7 @@
 package com.agentops.guardian.governance.execution;
 
+import com.agentops.guardian.coordinator.ConversationMemory;
+import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.audit.AuditEvent;
@@ -16,6 +18,7 @@ import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.service.CustomerService;
+import com.agentops.guardian.domain.customer.Customer;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ToolDataStore;
 import io.micrometer.observation.ObservationRegistry;
@@ -37,8 +40,10 @@ import org.springframework.ai.tool.execution.ToolExecutionException;
 import org.springframework.ai.tool.method.MethodToolCallback;
 
 import java.lang.reflect.Method;
+import java.time.LocalDate;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -74,16 +79,21 @@ class ToolInvocationCorrelationIntegrationTest {
     private CustomerService customerService;
     private CustomerDataTools customerDataTools;
     private GuardianToolCallingManager guardian;
+    private ConversationMemory sharedContextService;
+    private UUID conversationId;
 
     @BeforeEach
     void setUp() {
         observationRegistry = ObservationRegistry.create();
         correlation = new ToolInvocationCorrelation(observationRegistry);
+        sharedContextService = new ConversationMemory();
+        conversationId = sharedContextService.open(null);
         workflowContext = new WorkflowContext(
                 "CustomerSupportAgent",
                 WorkflowType.CUSTOMER_SUPPORT,
                 "Read customer data",
-                new WorkflowDefinitionRegistry().get(WorkflowType.CUSTOMER_SUPPORT)
+                new WorkflowDefinitionRegistry().get(WorkflowType.CUSTOMER_SUPPORT),
+                conversationId
         );
         workflowContextManager = mock(WorkflowContextManager.class);
         when(workflowContextManager.current()).thenReturn(workflowContext);
@@ -110,7 +120,17 @@ class ToolInvocationCorrelationIntegrationTest {
     void correlatesNormalTypedResultWithExactToolCallId() {
         when(capabilities.getCapability(CustomerDataTools.TOOL_NAME))
                 .thenReturn(WorkflowCapability.READ_CUSTOMER_DATA);
-        when(customerService.getCustomersByCity("North", 5)).thenReturn(List.of());
+        when(customerService.getCustomersByCity("North", 5)).thenReturn(List.of(
+                Customer.builder()
+                        .id("customer-north")
+                        .name("Alex North")
+                        .email("alex.north@example.test")
+                        .gender("OTHER")
+                        .city("North")
+                        .signupDate(LocalDate.now())
+                        .build()
+        ));
+        when(customerService.getCustomerOrders("customer-north")).thenReturn(List.of());
 
         execute(List.of(toolCall("call-north", "North")));
 
@@ -121,8 +141,28 @@ class ToolInvocationCorrelationIntegrationTest {
         CustomerDataTools.CustomerDataSet data =
                 assertInstanceOf(CustomerDataTools.CustomerDataSet.class, outcome.typedResult());
         assertEquals("North", data.city());
-        assertEquals(0, data.customerCount());
+        assertEquals(1, data.customerCount());
         assertEquals("CUSTOMER_DATA", workflowContext.getCurrentNodeId());
+        assertEquals(List.of(new VerifiedCustomerReadEvidence(
+                conversationId,
+                workflowContext.getWorkflowId(),
+                "call-north",
+                WorkflowCapability.READ_CUSTOMER_DATA,
+                ToolInvocationOutcome.Status.SUCCEEDED,
+                outcome.completedAt(),
+                List.of("alex.north@example.test")
+        )), sharedContextService.getVerifiedCustomerReads(conversationId));
+        WorkflowContext laterWorkflow = new WorkflowContext(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send email",
+                new WorkflowDefinitionRegistry().get(WorkflowType.EMAIL_COMMUNICATION),
+                conversationId
+        );
+        assertNotEquals(workflowContext.getWorkflowId(), laterWorkflow.getWorkflowId());
+        assertEquals("alex.north@example.test", sharedContextService.getVerifiedCustomerReads(
+                laterWorkflow.getConversationId()).getFirst().customerEmails().getFirst());
+        assertNull(laterWorkflow.getData("CUSTOMER_DATA"));
         verify(auditService).record(argThat(event ->
                 event.eventType() == AuditEventType.EXECUTION_OUTCOME
                         && "call-north".equals(event.toolCallId())
@@ -143,6 +183,7 @@ class ToolInvocationCorrelationIntegrationTest {
         ToolInvocationOutcome<?> outcome = workflowContext.getToolInvocationOutcomes().getFirst();
         assertEquals("call-failure", outcome.toolCallId());
         assertEquals(ToolInvocationOutcome.Status.FAILED, outcome.status());
+        assertTrue(sharedContextService.getVerifiedCustomerReads(conversationId).isEmpty());
         assertEquals(ToolExecutionException.class.getName(), outcome.failureType());
         assertNull(outcome.typedResult());
         String responseText = result.conversationHistory().stream()
@@ -190,6 +231,7 @@ class ToolInvocationCorrelationIntegrationTest {
 
         ToolInvocationOutcome<?> outcome = workflowContext.getToolInvocationOutcomes().getFirst();
         assertEquals(ToolInvocationOutcome.Status.UNCONFIRMED, outcome.status());
+        assertTrue(sharedContextService.getVerifiedCustomerReads(conversationId).isEmpty());
         assertNull(outcome.typedResult());
         assertEquals("START", workflowContext.getCurrentNodeId());
         verify(auditService, never()).record(argThat(event ->
@@ -232,6 +274,8 @@ class ToolInvocationCorrelationIntegrationTest {
     @Test
     void sameBatchCallsRetainTheirOwnIdsAndTypedResults() {
         when(customerService.getCustomersByCity(anyString(), anyInt())).thenReturn(List.of());
+        stubCustomer("North", "customer-north", "north@example.test");
+        stubCustomer("South", "customer-south", "south@example.test");
 
         execute(List.of(
                 toolCall("call-one", "North"),
@@ -241,6 +285,15 @@ class ToolInvocationCorrelationIntegrationTest {
         assertEquals(2, workflowContext.getToolInvocationOutcomes().size());
         assertOutcome("call-one", "North", ToolInvocationOutcome.Status.SUCCEEDED);
         assertOutcome("call-two", "South", ToolInvocationOutcome.Status.SUCCEEDED);
+        List<VerifiedCustomerReadEvidence> evidence =
+                sharedContextService.getVerifiedCustomerReads(conversationId);
+        assertEquals(2, evidence.size());
+        assertTrue(evidence.stream().anyMatch(read ->
+                read.sourceToolCallId().equals("call-one")
+                        && read.customerEmails().equals(List.of("north@example.test"))));
+        assertTrue(evidence.stream().anyMatch(read ->
+                read.sourceToolCallId().equals("call-two")
+                        && read.customerEmails().equals(List.of("south@example.test"))));
         assertEquals(0, correlation.activeInvocationCount());
     }
 
@@ -279,6 +332,7 @@ class ToolInvocationCorrelationIntegrationTest {
         assertFalse(executionIds.contains("reused-id"));
         assertOutcome(executionIds.get(0), "North", ToolInvocationOutcome.Status.SUCCEEDED);
         assertOutcome(executionIds.get(1), "South", ToolInvocationOutcome.Status.SUCCEEDED);
+        assertEquals(2, sharedContextService.getVerifiedCustomerReads(conversationId).size());
     }
 
     @Test
@@ -297,6 +351,10 @@ class ToolInvocationCorrelationIntegrationTest {
         ToolInvocationOutcome<?> failure = outcome("call-failed");
         assertEquals(ToolInvocationOutcome.Status.FAILED, failure.status());
         assertNull(failure.typedResult());
+        assertEquals(List.of("call-success"), sharedContextService.getVerifiedCustomerReads(conversationId)
+                .stream()
+                .map(VerifiedCustomerReadEvidence::sourceToolCallId)
+                .toList());
         assertEquals(0, correlation.activeInvocationCount());
     }
 
@@ -344,6 +402,7 @@ class ToolInvocationCorrelationIntegrationTest {
                 .filter(outcome -> outcome.toolCallId().equals("reused-call-id")
                         && outcome.status() == ToolInvocationOutcome.Status.FAILED)
                 .count());
+        assertEquals(1, sharedContextService.getVerifiedCustomerReads(conversationId).size());
         verify(auditService, times(1)).record(argThat(event ->
                 event.eventType() == AuditEventType.EXECUTION_OUTCOME
                         && "reused-call-id".equals(event.toolCallId())
@@ -488,6 +547,7 @@ class ToolInvocationCorrelationIntegrationTest {
         assertEquals(ToolInvocationOutcome.Status.FAILED, outcome.status());
         assertEquals(ToolExecutionException.class.getName(), outcome.failureType());
         assertNull(outcome.typedResult());
+        assertTrue(sharedContextService.getVerifiedCustomerReads(conversationId).isEmpty());
         assertEquals(0, correlation.activeInvocationCount());
     }
 
@@ -503,6 +563,7 @@ class ToolInvocationCorrelationIntegrationTest {
 
         assertFalse(workflowContext.getToolInvocationOutcomes().stream()
                 .anyMatch(outcome -> "call-blocked".equals(outcome.toolCallId())));
+        assertTrue(sharedContextService.getVerifiedCustomerReads(conversationId).isEmpty());
         assertEquals(0, correlation.activeInvocationCount());
     }
 
@@ -518,7 +579,8 @@ class ToolInvocationCorrelationIntegrationTest {
                 auditService,
                 new RiskEvaluator(),
                 mock(InterventionService.class),
-                correlation
+                correlation,
+                sharedContextService
         );
     }
 
@@ -560,5 +622,19 @@ class ToolInvocationCorrelationIntegrationTest {
                 .filter(outcome -> outcome.toolCallId().equals(callId))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private void stubCustomer(String city, String customerId, String email) {
+        when(customerService.getCustomersByCity(city, 5)).thenReturn(List.of(
+                Customer.builder()
+                        .id(customerId)
+                        .name(customerId)
+                        .email(email)
+                        .gender("OTHER")
+                        .city(city)
+                        .signupDate(LocalDate.now())
+                        .build()
+        ));
+        when(customerService.getCustomerOrders(customerId)).thenReturn(List.of());
     }
 }

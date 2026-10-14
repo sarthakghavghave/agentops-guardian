@@ -48,13 +48,14 @@ class CustomerSupportAgentTest {
         OrderTools orderTools = mock(OrderTools.class);
         ProductTools productTools = mock(ProductTools.class);
         CustomerDataTools customerDataTools = mock(CustomerDataTools.class);
+        WorkflowContextManager workflowContextManager = mock(WorkflowContextManager.class);
         CustomerSupportAgent agent = new CustomerSupportAgent(
                 builder,
                 customerTools,
                 orderTools,
                 productTools,
                 customerDataTools,
-                mock(WorkflowContextManager.class),
+                workflowContextManager,
                 memory
         );
 
@@ -62,6 +63,12 @@ class CustomerSupportAgentTest {
         assertEquals(
                 "Retrieved matching customer information.",
                 agent.chat(conversationId, "Give me the customer data.")
+        );
+        verify(workflowContextManager).start(
+                eq("CustomerSupportAgent"),
+                eq(com.agentops.guardian.governance.workflow.WorkflowType.CUSTOMER_SUPPORT),
+                eq("Give me the customer data."),
+                eq(conversationId)
         );
 
         ArgumentCaptor<Object[]> registeredTools = ArgumentCaptor.forClass(Object[].class);

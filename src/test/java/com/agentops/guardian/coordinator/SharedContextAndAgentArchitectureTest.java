@@ -112,7 +112,8 @@ class SharedContextAndAgentArchitectureTest {
                 AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null
         ));
         mockEmailDecision(sendDecision("team@example.com", "Meeting invitation", "Please join our meeting."));
-        doReturn("Communication tool accepted the simulated email request. Message ID: msg-1").when(emailAgent).process(any());
+        doReturn("Communication tool accepted the simulated email request. Message ID: msg-1")
+                .when(emailAgent).process(any(), any());
 
         AgentCoordinatorResponse response = coordinator.handle(
                 new AgentCoordinatorRequest("Send meeting invitation", "team@example.com", null)
@@ -121,7 +122,7 @@ class SharedContextAndAgentArchitectureTest {
         assertEquals(AgentCoordinator.IntentAction.EMAIL_REQUEST, response.action());
         assertTrue(response.response().contains("Message ID: msg-1"));
         verify(emailAgent).execute(any(), any());
-        verify(emailAgent).process(any());
+        verify(emailAgent).process(any(), any());
         verifyNoInteractions(reportAgent);
     }
 
@@ -274,7 +275,7 @@ class SharedContextAndAgentArchitectureTest {
         assertTrue(response.response().contains("msg-101"));
         verify(communicationTools).beginExecution();
         verify(communicationTools).clearExecutionResult();
-        verify(workflowContextManager).start(eq("EmailAgent"), any(), anyString());
+        verify(workflowContextManager).start(eq("EmailAgent"), any(), anyString(), any(UUID.class));
         verify(workflowContextManager).complete();
     }
 

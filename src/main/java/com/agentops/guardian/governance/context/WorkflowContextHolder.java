@@ -4,6 +4,8 @@ import com.agentops.guardian.governance.workflow.WorkflowDefinition;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Component
 public class WorkflowContextHolder {
 
@@ -15,11 +17,22 @@ public class WorkflowContextHolder {
             String goal,
             WorkflowDefinition workflowDefinition
     ) {
+        return startWorkflow(agentName, workflowType, goal, workflowDefinition, null);
+    }
+
+    public WorkflowContext startWorkflow(
+            String agentName,
+            WorkflowType workflowType,
+            String goal,
+            WorkflowDefinition workflowDefinition,
+            UUID conversationId
+    ) {
         WorkflowContext workflowContext = new WorkflowContext(
                 agentName,
                 workflowType,
                 goal,
-                workflowDefinition
+                workflowDefinition,
+                conversationId
         );
 
         context.set(workflowContext);

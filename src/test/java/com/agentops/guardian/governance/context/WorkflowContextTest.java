@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
@@ -44,6 +45,33 @@ class WorkflowContextTest {
         assertEquals("START", context.getCurrentNodeId());
         assertNotNull(context.getStartedAt());
         assertNull(context.getCompletedAt());
+    }
+
+    @Test
+    void conversationIdentityDoesNotMergeSeparateWorkflowExecutions() {
+        UUID conversationId = UUID.randomUUID();
+        WorkflowDefinition definition = new WorkflowDefinitionRegistry().get(WorkflowType.CUSTOMER_SUPPORT);
+        WorkflowContext first = new WorkflowContext(
+                "CustomerSupportAgent",
+                WorkflowType.CUSTOMER_SUPPORT,
+                "Read data",
+                definition,
+                conversationId
+        );
+        WorkflowContext second = new WorkflowContext(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send email",
+                new WorkflowDefinitionRegistry().get(WorkflowType.EMAIL_COMMUNICATION),
+                conversationId
+        );
+        first.putData("execution-only", "first");
+
+        assertEquals(conversationId, first.getConversationId());
+        assertEquals(conversationId, second.getConversationId());
+        assertNotEquals(first.getWorkflowId(), second.getWorkflowId());
+        assertEquals("first", first.getData("execution-only"));
+        assertNull(second.getData("execution-only"));
     }
 
     @Test
