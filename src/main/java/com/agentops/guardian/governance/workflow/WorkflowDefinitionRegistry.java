@@ -28,7 +28,10 @@ public class WorkflowDefinitionRegistry {
                 WorkflowType.EMAIL_COMMUNICATION,
                 new WorkflowDefinition(
                         WorkflowType.EMAIL_COMMUNICATION,
-                        Set.of(WorkflowCapability.SEND_EMAIL),
+                        Set.of(
+                                WorkflowCapability.READ_CONVERSATION_HISTORY,
+                                WorkflowCapability.SEND_EMAIL
+                        ),
                         WorkflowGraph.emailCommunicationGraph()
                 )
         );

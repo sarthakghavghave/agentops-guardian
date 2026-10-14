@@ -9,6 +9,7 @@ public class ToolCapabilityRegistry {
 
     private final Map<String, WorkflowCapability> capabilities = Map.of(
             "getCustomerData", WorkflowCapability.READ_CUSTOMER_DATA,
+            "readConversationHistory", WorkflowCapability.READ_CONVERSATION_HISTORY,
             "generateReport", WorkflowCapability.GENERATE_REPORT,
             "sendEmail", WorkflowCapability.SEND_EMAIL,
             "returnOrder", WorkflowCapability.RETURN_ORDER

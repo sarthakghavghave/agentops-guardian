@@ -11,12 +11,14 @@ import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.governance.audit.live.GovernanceAuditEventPersisted;
+import com.agentops.guardian.governance.audit.live.GovernanceEventStreamPayload;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -126,6 +128,35 @@ class PostgreSQLAuditServiceTest {
         assertEquals(GovernanceIntervention.REQUIRE_APPROVAL, entity.getIntervention());
         assertEquals("External communication requires approval.", entity.getRiskReason());
         assertEquals(null, entity.getPolicyDecision());
+    }
+
+    @Test
+    void persistsConversationIdAlongsideWorkflowActionIdentity() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        when(repository.save(any(AuditEventEntity.class))).thenAnswer(invocation -> {
+            AuditEventEntity entity = invocation.getArgument(0);
+            ReflectionTestUtils.setField(entity, "id", 103L);
+            return entity;
+        });
+        PostgreSQLAuditService service = new PostgreSQLAuditService(repository, eventPublisher);
+        UUID conversationId = UUID.randomUUID();
+        AuditEvent event = AuditEvent.proposedAction(
+                "workflow-history", "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                "history-call", "readConversationHistory", WorkflowCapability.READ_CONVERSATION_HISTORY, 1
+        ).withConversationId(conversationId);
+
+        service.record(event);
+
+        ArgumentCaptor<AuditEventEntity> entityCaptor = ArgumentCaptor.forClass(AuditEventEntity.class);
+        verify(repository).save(entityCaptor.capture());
+        AuditEventEntity entity = entityCaptor.getValue();
+        assertEquals(conversationId, entity.getConversationId());
+        assertEquals("workflow-history", entity.getWorkflowId());
+        assertEquals("history-call", entity.getToolCallId());
+        assertEquals(conversationId,
+                GovernanceEventStreamPayload.from(entity, null).conversationId());
+        verify(eventPublisher).publishEvent(any(GovernanceAuditEventPersisted.class));
     }
 
     @Test

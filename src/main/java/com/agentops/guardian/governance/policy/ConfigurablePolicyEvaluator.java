@@ -1,18 +1,19 @@
 package com.agentops.guardian.governance.policy;
 
 import com.agentops.guardian.governance.context.WorkflowContext;
+import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
-import lombok.RequiredArgsConstructor;
+import com.agentops.guardian.governance.workflow.WorkflowType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
 import java.util.Objects;
 
 @Component
-@RequiredArgsConstructor
 public class ConfigurablePolicyEvaluator {
 
     private static final String DEFAULT_POLICY_ID = "GOVERNANCE_POLICY_ENGINE";
@@ -20,6 +21,25 @@ public class ConfigurablePolicyEvaluator {
 
     private final PolicyDefinitionRepository policyRepository;
     private final ToolCapabilityRegistry toolCapabilityRegistry;
+    private final SharedContextService sharedContextService;
+
+    @Autowired
+    public ConfigurablePolicyEvaluator(
+            PolicyDefinitionRepository policyRepository,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            SharedContextService sharedContextService
+    ) {
+        this.policyRepository = policyRepository;
+        this.toolCapabilityRegistry = toolCapabilityRegistry;
+        this.sharedContextService = sharedContextService;
+    }
+
+    public ConfigurablePolicyEvaluator(
+            PolicyDefinitionRepository policyRepository,
+            ToolCapabilityRegistry toolCapabilityRegistry
+    ) {
+        this(policyRepository, toolCapabilityRegistry, null);
+    }
 
     public GovernanceDecision evaluate(WorkflowContext workflow, ToolCallEvent proposedCall) {
         Objects.requireNonNull(workflow, "Workflow context is required.");
@@ -93,7 +113,21 @@ public class ConfigurablePolicyEvaluator {
             case WORKFLOW_TYPE -> enumName(workflow.getWorkflowType());
             case WORKFLOW_STATE -> enumName(workflow.getCurrentState());
             case CAPABILITY -> enumName(toolCapabilityRegistry.getCapability(proposedCall.toolName()));
+            case VERIFIED_CUSTOMER_READ_IN_CONVERSATION -> hasVerifiedCustomerRead(workflow, proposedCall)
+                    ? "true"
+                    : "false";
         };
+    }
+
+    private boolean hasVerifiedCustomerRead(WorkflowContext workflow, ToolCallEvent proposedCall) {
+        if (sharedContextService == null
+                || workflow.getWorkflowType() != WorkflowType.EMAIL_COMMUNICATION
+                || toolCapabilityRegistry.getCapability(proposedCall.toolName())
+                != WorkflowCapability.READ_CONVERSATION_HISTORY
+                || workflow.getConversationId() == null) {
+            return false;
+        }
+        return !sharedContextService.getVerifiedCustomerReads(workflow.getConversationId()).isEmpty();
     }
 
     private String enumName(Enum<?> value) {

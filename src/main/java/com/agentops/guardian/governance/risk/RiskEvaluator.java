@@ -65,7 +65,7 @@ public class RiskEvaluator {
     private boolean isExternalAction(WorkflowCapability capability) {
         return switch (capability) {
             case SEND_EMAIL, RETURN_ORDER -> true;
-            case GENERATE_REPORT, READ_CUSTOMER_DATA, READ_ORDER, READ_PRODUCT -> false;
+            case GENERATE_REPORT, READ_CONVERSATION_HISTORY, READ_CUSTOMER_DATA, READ_ORDER, READ_PRODUCT -> false;
         };
     }
 

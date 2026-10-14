@@ -340,6 +340,38 @@ class GuardianToolCallingManagerTest {
     }
 
     @Test
+    void governanceDisabledDelegatesHighRiskEmailWithoutPolicyRiskOrApprovalIntervention() {
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
+        ToolExecutionResult expectedResult = successfulResult("email-1", "sendEmail");
+        when(delegate.executeToolCalls(any(), any())).thenReturn(expectedResult);
+        when(toolCapabilityRegistry.getCapability("sendEmail")).thenReturn(WorkflowCapability.SEND_EMAIL);
+        GuardianToolCallingManager disabledGuardian = new GuardianToolCallingManager(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator(),
+                interventionService,
+                new ToolInvocationCorrelation(io.micrometer.observation.ObservationRegistry.NOOP),
+                null,
+                false
+        );
+
+        ToolExecutionResult result = disabledGuardian.executeToolCalls(prompt, chatResponse("email-1", "sendEmail"));
+
+        assertEquals(expectedResult, result);
+        verify(delegate).executeToolCalls(eq(prompt), any(ChatResponse.class));
+        when(delegate.executeToolCalls(any(), any()))
+                .thenThrow(new IllegalArgumentException("Ordinary tool validation failed."));
+        assertThrows(IllegalArgumentException.class, () ->
+                disabledGuardian.executeToolCalls(prompt, chatResponse("email-1", "sendEmail")));
+        verify(delegate, times(2)).executeToolCalls(eq(prompt), any(ChatResponse.class));
+        verifyNoInteractions(policyEngine, auditService, interventionService);
+    }
+
+    @Test
     void priorApprovalDoesNotAuthorizeAnotherToolCall() {
         useEmailWorkflowContext();
         markAnalyticalReportHandoff();

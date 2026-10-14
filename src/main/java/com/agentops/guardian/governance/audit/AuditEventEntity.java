@@ -24,13 +24,15 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(
 		name = "audit_events",
 		indexes = {
 				@Index(name = "idx_audit_events_workflow_time", columnList = "workflow_id, event_timestamp"),
-				@Index(name = "idx_audit_events_tool_call", columnList = "tool_call_id")
+				@Index(name = "idx_audit_events_tool_call", columnList = "tool_call_id"),
+				@Index(name = "idx_audit_events_conversation_time", columnList = "conversation_id, event_timestamp")
 		}
 )
 @Access(AccessType.FIELD)
@@ -44,6 +46,9 @@ public class AuditEventEntity {
 
 	@Column(name = "workflow_id", nullable = false, length = 100)
 	private String workflowId;
+
+	@Column(name = "conversation_id")
+	private UUID conversationId;
 
 	@Column(name = "agent_name", nullable = false, length = 150)
 	private String agentName;
@@ -160,6 +165,7 @@ public class AuditEventEntity {
 	static AuditEventEntity from(AuditEvent event) {
 		AuditEventEntity entity = new AuditEventEntity();
 		entity.workflowId = event.workflowId();
+		entity.conversationId = event.conversationId();
 		entity.agentName = event.agentName();
 		entity.workflowType = event.workflowType();
 		entity.timestamp = event.timestamp();

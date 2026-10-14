@@ -5,5 +5,6 @@ public enum PolicyConditionField {
     TOOL_NAME,
     WORKFLOW_TYPE,
     WORKFLOW_STATE,
-    CAPABILITY
+    CAPABILITY,
+    VERIFIED_CUSTOMER_READ_IN_CONVERSATION
 }

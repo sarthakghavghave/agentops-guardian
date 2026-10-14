@@ -8,7 +8,9 @@ import com.agentops.guardian.coordinator.context.ExecutionStatus;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowType;
@@ -165,6 +167,100 @@ class EmailAgentTest {
         verify(tools).beginExecution();
         verify(tools).executionResults();
         verify(tools).clearExecutionResult();
+    }
+
+    @Test
+    void deniedHistoryAccessExcludesTranscriptButKeepsCurrentRequestAndReportMetadata() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient chatClient = mockClient("No send");
+        when(builder.build()).thenReturn(chatClient);
+        when(chatClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(new EmailAgent.EmailDecision(
+                        EmailAgent.EmailDecisionOutcome.CLARIFICATION_REQUIRED,
+                        "Please clarify.",
+                        null, null, null, false, null
+                ));
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        String privateTranscript = "Prior customer email: private.customer@example.test";
+        memory.recordTurn(conversationId, "Look up this customer's record", privateTranscript);
+        Artifact report = Artifact.generatedPdfReport("Quarterly report", "reports/q1.pdf", 1234, 12);
+        memory.registerArtifact(conversationId, report);
+        ConversationHistoryAccessService accessService = mock(ConversationHistoryAccessService.class);
+        when(accessService.readHistory(conversationId)).thenReturn(
+                new ConversationHistoryAccessService.HistoryAccessResult(
+                        new GovernanceDecision(
+                                GovernanceDecision.DecisionType.BLOCK,
+                                "Customer data was previously retrieved in this conversation.",
+                                "BLOCK_EMAIL_HISTORY_AFTER_CUSTOMER_READ"
+                        ),
+                        List.of()
+                )
+        );
+        EmailAgent agent = new EmailAgent(
+                builder,
+                mock(CommunicationTools.class),
+                mock(WorkflowContextManager.class),
+                memory,
+                null,
+                accessService
+        );
+        clearInvocations(chatClient.prompt());
+
+        AgentResult result = agent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Email the quarterly report", null, null)
+        );
+
+        assertTrue(result.isClarification());
+        ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
+        verify(chatClient.prompt()).messages(messages.capture());
+        String promptText = messages.getValue().stream().map(Message::getText).reduce("", (left, right) ->
+                left + "\n" + right);
+        assertFalse(promptText.contains(privateTranscript));
+        assertTrue(promptText.contains("Email the quarterly report"));
+        assertTrue(promptText.contains(report.id()));
+        assertTrue(promptText.contains("Shared conversation history is unavailable"));
+        verify(accessService).readHistory(conversationId);
+    }
+
+    @Test
+    void governanceDisabledHistoryAccessPreservesExistingTranscriptBehavior() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient chatClient = mockClient("No send");
+        when(builder.build()).thenReturn(chatClient);
+        when(chatClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(new EmailAgent.EmailDecision(
+                        EmailAgent.EmailDecisionOutcome.CLARIFICATION_REQUIRED,
+                        "Please clarify.",
+                        null, null, null, false, null
+                ));
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        String privateTranscript = "Prior customer email: private.customer@example.test";
+        memory.recordTurn(conversationId, "Earlier request", privateTranscript);
+        ConversationHistoryAccessService accessService =
+                new ConversationHistoryAccessService(null, null, null, memory, false);
+        EmailAgent agent = new EmailAgent(
+                builder,
+                mock(CommunicationTools.class),
+                mock(WorkflowContextManager.class),
+                memory,
+                null,
+                accessService
+        );
+        clearInvocations(chatClient.prompt());
+
+        agent.execute(conversationId, new AgentCoordinatorRequest("Please send it", null, null));
+
+        ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
+        verify(chatClient.prompt()).messages(messages.capture());
+        assertTrue(messages.getValue().stream().anyMatch(message ->
+                message.getText().contains(privateTranscript)));
     }
 
     @Test
@@ -596,12 +692,15 @@ class EmailAgentTest {
     }
 
     @Test
-    void registeredWorkflowDefinitionGrantsOnlyEmailCapability() {
+    void registeredWorkflowDefinitionIncludesEmailAndGovernedHistoryCapabilities() {
         WorkflowDefinitionRegistry registry = new WorkflowDefinitionRegistry();
         var definition = registry.get(WorkflowType.EMAIL_COMMUNICATION);
         var reportingDefinition = registry.get(WorkflowType.CUSTOMER_REPORTING);
 
-        assertEquals(Set.of(WorkflowCapability.SEND_EMAIL), definition.capabilities());
+        assertEquals(
+                Set.of(WorkflowCapability.READ_CONVERSATION_HISTORY, WorkflowCapability.SEND_EMAIL),
+                definition.capabilities()
+        );
         assertFalse(reportingDefinition.allows(WorkflowCapability.SEND_EMAIL));
     }
 

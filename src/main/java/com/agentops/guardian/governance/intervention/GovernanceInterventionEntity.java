@@ -18,6 +18,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(
@@ -38,6 +39,9 @@ public class GovernanceInterventionEntity {
 
     @Column(name = "workflow_id", nullable = false, length = 100, updatable = false)
     private String workflowId;
+
+    @Column(name = "conversation_id", updatable = false)
+    private UUID conversationId;
 
     @Column(name = "tool_call_id", nullable = false, length = 200, updatable = false)
     private String toolCallId;
@@ -103,6 +107,7 @@ public class GovernanceInterventionEntity {
     void updateFrom(GovernanceIntervention intervention) {
         interventionId = intervention.interventionId();
         workflowId = intervention.workflowId();
+        conversationId = intervention.conversationId();
         toolCallId = intervention.toolCallId();
         agentName = intervention.agentName();
         workflowType = intervention.workflowType();
@@ -138,7 +143,8 @@ public class GovernanceInterventionEntity {
                 resolutionReason,
                 workflowNodeId,
                 workflowState,
-                classificationAtCreation
+                classificationAtCreation,
+                conversationId
         );
     }
 }

@@ -8,6 +8,7 @@ import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CommunicationTools;
@@ -44,6 +45,7 @@ public class EmailAgent {
     private final WorkflowContextManager workflowContextManager;
     private final SharedContextService sharedContextService;
     private final ReportFileStorageService reportFileStorageService;
+    private final ConversationHistoryAccessService historyAccessService;
 
     @Autowired
     public EmailAgent(
@@ -51,12 +53,14 @@ public class EmailAgent {
             CommunicationTools communicationTools,
             WorkflowContextManager workflowContextManager,
             SharedContextService sharedContextService,
-            ReportFileStorageService reportFileStorageService
+            ReportFileStorageService reportFileStorageService,
+            ConversationHistoryAccessService historyAccessService
     ) throws IOException {
         this.communicationTools = communicationTools;
         this.workflowContextManager = workflowContextManager;
         this.sharedContextService = sharedContextService;
         this.reportFileStorageService = reportFileStorageService;
+        this.historyAccessService = historyAccessService;
         String systemPrompt = new String(
                 new ClassPathResource("prompts/email-agent-system.txt")
                         .getInputStream()
@@ -70,6 +74,23 @@ public class EmailAgent {
                 .defaultSystem(TOOL_SYSTEM_PROMPT)
                 .defaultTools(communicationTools)
                 .build();
+    }
+
+    public EmailAgent(
+            ChatClient.Builder chatClientBuilder,
+            CommunicationTools communicationTools,
+            WorkflowContextManager workflowContextManager,
+            SharedContextService sharedContextService,
+            ReportFileStorageService reportFileStorageService
+    ) throws IOException {
+        this(
+                chatClientBuilder,
+                communicationTools,
+                workflowContextManager,
+                sharedContextService,
+                reportFileStorageService,
+                null
+        );
     }
 
     public EmailAgent(
@@ -215,10 +236,16 @@ public class EmailAgent {
             List<Artifact> reportArtifacts
     ) {
         List<Message> messages = new ArrayList<>();
-        if (sharedContextService != null && conversationId != null) {
+        boolean historyAllowed = true;
+        if (sharedContextService != null && conversationId != null && historyAccessService != null) {
+            ConversationHistoryAccessService.HistoryAccessResult access =
+                    historyAccessService.readHistory(conversationId);
+            historyAllowed = access.allowed();
+            messages.addAll(access.messages());
+        } else if (sharedContextService != null && conversationId != null) {
             messages.addAll(sharedContextService.history(conversationId));
         }
-        messages.add(new UserMessage(buildDecisionInput(request, reportArtifacts)));
+        messages.add(new UserMessage(buildDecisionInput(request, reportArtifacts, historyAllowed)));
         return decisionClient.prompt()
                 .messages(messages)
                 .call()
@@ -307,16 +334,29 @@ public class EmailAgent {
         }
     }
 
-    private String buildDecisionInput(AgentCoordinatorRequest request, List<Artifact> reportArtifacts) {
+    private String buildDecisionInput(
+            AgentCoordinatorRequest request,
+            List<Artifact> reportArtifacts,
+            boolean historyAllowed
+    ) {
         StringBuilder input = new StringBuilder("""
-                Interpret the current request using the conversation history and registered report artifacts.
+                Interpret the current request using the available conversation history and registered report artifacts.
                 Return only the structured EmailDecision. Do not call communication tools while deciding.
                 A SEND decision is appropriate only when conversation context establishes explicit authorization
                 to send. Use CLARIFICATION_REQUIRED for ambiguous intent or missing information, and UNSUPPORTED
                 for requests outside supported email composition and sending.
 
-                Current user message:
-                """).append(request.message());
+                """);
+        if (historyAllowed) {
+            input.append("Current user message:\n");
+        } else {
+            input.append("""
+                    Shared conversation history is unavailable. Use only the current request and registered
+                    report artifacts; do not infer details from prior turns.
+                    Current user message:
+                    """);
+        }
+        input.append(request.message());
         appendInput(input, "Provided recipient", request.recipient());
         appendInput(input, "Subject instructions", request.subjectInstructions());
         appendInput(input, "Body instructions", request.bodyInstructions());

@@ -7,6 +7,7 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record GovernanceInterventionResponse(
         String interventionId,
@@ -22,7 +23,8 @@ public record GovernanceInterventionResponse(
         Instant createdAt,
         Instant resolvedAt,
         String resolvedBy,
-        String resolutionReason
+        String resolutionReason,
+        UUID conversationId
 ) {
 
     public static GovernanceInterventionResponse from(GovernanceIntervention intervention) {
@@ -40,7 +42,8 @@ public record GovernanceInterventionResponse(
                 intervention.createdAt(),
                 intervention.resolvedAt(),
                 intervention.resolvedBy(),
-                intervention.resolutionReason()
+                intervention.resolutionReason(),
+                intervention.conversationId()
         );
     }
 }

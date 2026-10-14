@@ -11,6 +11,7 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record AuditEvent(
         String workflowId,
@@ -41,8 +42,61 @@ public record AuditEvent(
         String interventionId,
         GovernanceInterventionStatus interventionStatus,
         String resolvedBy,
-        String resolutionReason
+        String resolutionReason,
+        UUID conversationId
 ) {
+    public AuditEvent(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            Instant timestamp,
+            AuditEventType eventType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            GovernanceDecision.DecisionType policyDecision,
+            String policyId,
+            String policyReason,
+            ExecutionStatus executionStatus,
+            String errorType,
+            String errorMessage,
+            WorkflowNodeSnapshot nodeBefore,
+            WorkflowNodeSnapshot nodeAfter,
+            WorkflowState stateBefore,
+            WorkflowState stateAfter,
+            DataClassification classificationBefore,
+            DataClassification classificationAfter,
+            String transformationType,
+            RiskLevel riskLevel,
+            GovernanceIntervention intervention,
+            String riskReason,
+            String interventionId,
+            GovernanceInterventionStatus interventionStatus,
+            String resolvedBy,
+            String resolutionReason
+    ) {
+        this(
+                workflowId, agentName, workflowType, timestamp, eventType, toolCallId, toolName,
+                capability, sequence, policyDecision, policyId, policyReason, executionStatus,
+                errorType, errorMessage, nodeBefore, nodeAfter, stateBefore, stateAfter,
+                classificationBefore, classificationAfter, transformationType, riskLevel,
+                intervention, riskReason, interventionId, interventionStatus, resolvedBy,
+                resolutionReason, null
+        );
+    }
+
+    public AuditEvent withConversationId(UUID value) {
+        return new AuditEvent(
+                workflowId, agentName, workflowType, timestamp, eventType, toolCallId, toolName,
+                capability, sequence, policyDecision, policyId, policyReason, executionStatus,
+                errorType, errorMessage, nodeBefore, nodeAfter, stateBefore, stateAfter,
+                classificationBefore, classificationAfter, transformationType, riskLevel,
+                intervention, riskReason, interventionId, interventionStatus, resolvedBy,
+                resolutionReason, value
+        );
+    }
+
         public AuditEvent(
             String workflowId,
             String agentName,
@@ -457,7 +511,7 @@ public record AuditEvent(
                 intervention.status(),
                 intervention.resolvedBy(),
                 intervention.resolutionReason()
-        );
+        ).withConversationId(intervention.conversationId());
     }
 
     public enum ExecutionStatus {

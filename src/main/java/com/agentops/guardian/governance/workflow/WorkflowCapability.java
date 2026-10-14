@@ -2,6 +2,7 @@ package com.agentops.guardian.governance.workflow;
 
 public enum WorkflowCapability {
     READ_CUSTOMER_DATA,
+    READ_CONVERSATION_HISTORY,
     READ_ORDER,
     READ_PRODUCT,
     GENERATE_REPORT,

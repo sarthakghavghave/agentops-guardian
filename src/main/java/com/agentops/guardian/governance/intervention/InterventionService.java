@@ -79,7 +79,8 @@ public class InterventionService {
                 null,
                 context.getCurrentNodeId(),
                 context.getCurrentState(),
-                context.getCurrentDataClassification()
+                context.getCurrentDataClassification(),
+                context.getConversationId()
         );
 
         interventionRepository.save(GovernanceInterventionEntity.from(intervention));

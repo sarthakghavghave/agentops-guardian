@@ -7,6 +7,7 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record GovernanceIntervention(
         String interventionId,
@@ -25,8 +26,35 @@ public record GovernanceIntervention(
         String resolutionReason,
         String workflowNodeId,
         WorkflowState workflowState,
-        DataClassification classificationAtCreation
+        DataClassification classificationAtCreation,
+        UUID conversationId
 ) {
+
+    public GovernanceIntervention(
+            String interventionId,
+            String workflowId,
+            String toolCallId,
+            String agentName,
+            WorkflowType workflowType,
+            WorkflowCapability capability,
+            RiskLevel riskLevel,
+            com.agentops.guardian.governance.risk.GovernanceIntervention intervention,
+            GovernanceInterventionStatus status,
+            String reason,
+            Instant createdAt,
+            Instant resolvedAt,
+            String resolvedBy,
+            String resolutionReason,
+            String workflowNodeId,
+            WorkflowState workflowState,
+            DataClassification classificationAtCreation
+    ) {
+        this(
+                interventionId, workflowId, toolCallId, agentName, workflowType, capability,
+                riskLevel, intervention, status, reason, createdAt, resolvedAt, resolvedBy,
+                resolutionReason, workflowNodeId, workflowState, classificationAtCreation, null
+        );
+    }
 
     public GovernanceIntervention {
         requireText(interventionId, "Intervention id is required.");
@@ -94,7 +122,8 @@ public record GovernanceIntervention(
                 resolution,
                 workflowNodeId,
                 workflowState,
-                classificationAtCreation
+                classificationAtCreation,
+                conversationId
         );
     }
 

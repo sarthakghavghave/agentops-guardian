@@ -13,6 +13,7 @@ import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.intervention.InterventionService;
+import com.agentops.guardian.governance.config.GovernanceSettings;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.DataTransformation;
@@ -57,6 +58,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final InterventionService interventionService;
     private final ToolInvocationCorrelation toolInvocationCorrelation;
     private final SharedContextService sharedContextService;
+    private final boolean governanceEnabled;
 
     @Autowired
     public GuardianToolCallingManager(
@@ -67,7 +69,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             RiskEvaluator riskEvaluator,
             InterventionService interventionService,
             ToolInvocationCorrelation toolInvocationCorrelation,
-            SharedContextService sharedContextService) {
+            SharedContextService sharedContextService,
+            GovernanceSettings governanceSettings) {
         this(
                 workflowContextManager,
                 policyEngine,
@@ -79,7 +82,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 riskEvaluator,
                 interventionService,
                 toolInvocationCorrelation,
-                sharedContextService
+                sharedContextService,
+                governanceSettings.isEnabled()
         );
     }
 
@@ -190,6 +194,31 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             InterventionService interventionService,
             ToolInvocationCorrelation toolInvocationCorrelation,
             SharedContextService sharedContextService) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                riskEvaluator,
+                interventionService,
+                toolInvocationCorrelation,
+                sharedContextService,
+                true
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService,
+            RiskEvaluator riskEvaluator,
+            InterventionService interventionService,
+            ToolInvocationCorrelation toolInvocationCorrelation,
+            SharedContextService sharedContextService,
+            boolean governanceEnabled) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
@@ -199,10 +228,14 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         this.interventionService = interventionService;
         this.toolInvocationCorrelation = toolInvocationCorrelation;
         this.sharedContextService = sharedContextService;
+        this.governanceEnabled = governanceEnabled;
     }
 
     @Override
     public ToolExecutionResult executeToolCalls(Prompt prompt, ChatResponse chatResponse) {
+        if (!governanceEnabled) {
+            return delegate.executeToolCalls(prompt, chatResponse);
+        }
 
         if (chatResponse != null
                 && chatResponse.getResult() != null
@@ -237,7 +270,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
                 WorkflowCapability capability = proposedToolCall.capability();
 
-                auditService.record(AuditEvent.proposedAction(
+                recordAudit(workflowContext, AuditEvent.proposedAction(
                         workflowContext.getWorkflowId(),
                         workflowContext.getAgentName(),
                         workflowContext.getWorkflowType(),
@@ -251,7 +284,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
                 GovernanceDecision decision = policyEngine.evaluate(workflowContext, event);
 
-                auditService.record(AuditEvent.policyDecision(
+                recordAudit(workflowContext, AuditEvent.policyDecision(
                         workflowContext.getWorkflowId(),
                         workflowContext.getAgentName(),
                         workflowContext.getWorkflowType(),
@@ -262,7 +295,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 ));
 
                 if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
-                    auditService.record(AuditEvent.executionOutcome(
+                    recordAudit(workflowContext, AuditEvent.executionOutcome(
                             workflowContext.getWorkflowId(),
                             workflowContext.getAgentName(),
                             workflowContext.getWorkflowType(),
@@ -291,7 +324,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     workflowContext.validateCapabilityTransition(capability);
 
                     RiskDecision riskDecision = RiskDecision.from(riskEvaluator.assess(workflowContext, capability));
-                    auditService.record(AuditEvent.riskAssessment(
+                    recordAudit(workflowContext, AuditEvent.riskAssessment(
                             workflowContext.getWorkflowId(),
                             workflowContext.getAgentName(),
                             workflowContext.getWorkflowType(),
@@ -381,7 +414,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                                 workflowContext.getCurrentState(),
                                 capability
                         );
-                        auditService.record(AuditEvent.executionOutcome(
+                        recordAudit(workflowContext, AuditEvent.executionOutcome(
                                 workflowContext.getWorkflowId(),
                                 workflowContext.getAgentName(),
                                 workflowContext.getWorkflowType(),
@@ -414,7 +447,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                                 capability
                         );
 
-                        auditService.record(AuditEvent.executionOutcome(
+                        recordAudit(workflowContext, AuditEvent.executionOutcome(
                                 workflowContext.getWorkflowId(),
                                 workflowContext.getAgentName(),
                                 workflowContext.getWorkflowType(),
@@ -453,7 +486,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     if (CustomerDataTools.TOOL_NAME.equals(proposedToolCall.toolCall().name())
                             && invocationOutcome != null
                             && invocationOutcome.status() == ToolInvocationOutcome.Status.SUCCEEDED) {
-                        auditService.record(AuditEvent.executionOutcome(
+                        recordAudit(workflowContext, AuditEvent.executionOutcome(
                                 workflowContext.getWorkflowId(),
                                 workflowContext.getAgentName(),
                                 workflowContext.getWorkflowType(),
@@ -480,7 +513,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                             workflowContext.getCurrentState(),
                             capability
                     );
-                    auditService.record(AuditEvent.executionOutcome(
+                    recordAudit(workflowContext, AuditEvent.executionOutcome(
                             workflowContext.getWorkflowId(),
                             workflowContext.getAgentName(),
                             workflowContext.getWorkflowType(),
@@ -524,7 +557,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 workflowContext.getCurrentState(),
                 capability
         );
-        auditService.record(AuditEvent.workflowTransition(
+        recordAudit(workflowContext, AuditEvent.workflowTransition(
                 workflowContext.getWorkflowId(),
                 workflowContext.getAgentName(),
                 workflowContext.getWorkflowType(),
@@ -536,6 +569,10 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 nodeBefore.state(),
                 nodeAfter.state()
         ));
+    }
+
+    private void recordAudit(WorkflowContext workflowContext, AuditEvent event) {
+        auditService.record(event.withConversationId(workflowContext.getConversationId()));
     }
 
     private void recordVerifiedCustomerReadEvidence(
