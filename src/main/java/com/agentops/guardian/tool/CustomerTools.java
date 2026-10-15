@@ -2,6 +2,7 @@ package com.agentops.guardian.tool;
 
 import com.agentops.guardian.domain.customer.Customer;
 import com.agentops.guardian.domain.order.Order;
+import com.agentops.guardian.governance.execution.ToolInvocationCorrelation;
 import com.agentops.guardian.service.CustomerService;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
@@ -12,8 +13,22 @@ import java.util.List;
 public class CustomerTools {
 
     private final CustomerService customerService;
-    public CustomerTools(CustomerService customerService) {
+    private final ToolInvocationCorrelation toolInvocationCorrelation;
+
+    public CustomerTools(
+            CustomerService customerService,
+            ToolInvocationCorrelation toolInvocationCorrelation
+    ) {
         this.customerService = customerService;
+        this.toolInvocationCorrelation = toolInvocationCorrelation;
+    }
+
+    public static final String GET_CUSTOMER_TOOL_NAME = "getCustomer";
+    public static final String SEARCH_CUSTOMERS_BY_NAME_TOOL_NAME = "searchCustomersByName";
+
+    public static boolean isCustomerPiiReadTool(String toolName) {
+        return GET_CUSTOMER_TOOL_NAME.equals(toolName)
+                || SEARCH_CUSTOMERS_BY_NAME_TOOL_NAME.equals(toolName);
     }
 
     @Tool(description = "Find a customer by their unique customer ID.")
@@ -23,7 +38,7 @@ public class CustomerTools {
 
         if (customer == null) return "No customer found with ID " + customerId + ".";
 
-        return String.format("""
+        String result = String.format("""
                 Customer ID: %s
                 Name: %s
                 Email: %s
@@ -38,6 +53,13 @@ public class CustomerTools {
                 customer.getCity(),
                 customer.getSignupDate()
         );
+        toolInvocationCorrelation.recordCustomerLookupResult(
+                GET_CUSTOMER_TOOL_NAME,
+                customer.getEmail() == null || customer.getEmail().isBlank()
+                        ? List.of()
+                        : List.of(customer.getEmail())
+        );
+        return result;
     }
 
     @Tool(description = """
@@ -50,9 +72,12 @@ public class CustomerTools {
         List<Customer> customers = customerService.searchByName(name);
 
         if (customers.isEmpty()) return "No customers found with name: " + name;
-        if (customers.size() > 10) return "Too many customers found. Please provide additional information such as email or city.";
+        if (customers.size() > 10) {
+            toolInvocationCorrelation.recordCustomerLookupResult(SEARCH_CUSTOMERS_BY_NAME_TOOL_NAME, List.of());
+            return "Too many customers found. Please provide additional information such as email or city.";
+        }
 
-        return customers.stream()
+        String result = customers.stream()
                 .map(customer -> String.format(
                         "Customer ID: %s | Name: %s | Email: %s | City: %s",
                         customer.getId(),
@@ -61,6 +86,15 @@ public class CustomerTools {
                         customer.getCity()
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
+        toolInvocationCorrelation.recordCustomerLookupResult(
+                SEARCH_CUSTOMERS_BY_NAME_TOOL_NAME,
+                customers.stream()
+                        .map(Customer::getEmail)
+                        .filter(email -> email != null && !email.isBlank())
+                        .distinct()
+                        .toList()
+        );
+        return result;
     }
 
     @Tool(description = "Retrieve all orders belonging to a specific customer.")

@@ -672,18 +672,23 @@ public class GuardianToolCallingManager implements ToolCallingManager {
 
         invocationOutcomes.values().stream()
                 .filter(outcome -> outcome.status() == ToolInvocationOutcome.Status.SUCCEEDED)
-                .filter(outcome -> CustomerDataTools.TOOL_NAME.equals(outcome.toolName()))
-                .filter(outcome -> outcome.typedResult() instanceof CustomerDataTools.CustomerDataSet)
+                .filter(outcome -> ToolInvocationCorrelation.isVerifiedCustomerReadTool(outcome.toolName()))
+                .filter(outcome -> outcome.typedResult() instanceof CustomerDataTools.CustomerDataSet
+                        || outcome.typedResult() instanceof ToolInvocationCorrelation.CustomerReadResult)
                 .map(outcome -> {
-                    CustomerDataTools.CustomerDataSet data =
-                            (CustomerDataTools.CustomerDataSet) outcome.typedResult();
-                    List<String> customerEmails = data.customers() == null
-                            ? List.of()
-                            : data.customers().stream()
-                            .map(CustomerDataTools.CustomerRecord::email)
-                            .filter(email -> email != null && !email.isBlank())
-                            .distinct()
-                            .toList();
+                    List<String> customerEmails;
+                    if (outcome.typedResult() instanceof CustomerDataTools.CustomerDataSet data) {
+                        customerEmails = data.customers() == null
+                                ? List.of()
+                                : data.customers().stream()
+                                .map(CustomerDataTools.CustomerRecord::email)
+                                .filter(email -> email != null && !email.isBlank())
+                                .distinct()
+                                .toList();
+                    } else {
+                        customerEmails = ((ToolInvocationCorrelation.CustomerReadResult)
+                                outcome.typedResult()).customerEmails();
+                    }
                     return new VerifiedCustomerReadEvidence(
                             workflowContext.getConversationId(),
                             workflowContext.getWorkflowId(),

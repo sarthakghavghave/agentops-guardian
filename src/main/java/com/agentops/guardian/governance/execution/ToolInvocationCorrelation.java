@@ -3,6 +3,7 @@ package com.agentops.guardian.governance.execution;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.model.ToolInvocationOutcome;
 import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.tool.CustomerTools;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationHandler;
 import io.micrometer.observation.ObservationRegistry;
@@ -84,7 +85,31 @@ public class ToolInvocationCorrelation {
         ActiveInvocation activeInvocation = activeInvocations.get(toolContext);
         if (activeInvocation != null
                 && CustomerDataTools.TOOL_NAME.equals(toolContext.getToolDefinition().name())) {
+            List<String> customerEmails = result.customers() == null
+                    ? List.of()
+                    : result.customers().stream()
+                    .map(CustomerDataTools.CustomerRecord::email)
+                    .filter(email -> email != null && !email.isBlank())
+                    .distinct()
+                    .toList();
             activeInvocation.record(result);
+        }
+    }
+
+    public void recordCustomerLookupResult(String toolName, List<String> customerEmails) {
+        if (!CustomerTools.isCustomerPiiReadTool(toolName)) {
+            throw new IllegalArgumentException("A recognized customer PII lookup tool is required.");
+        }
+
+        Observation observation = observationRegistry.getCurrentObservation();
+        if (observation == null
+                || !(observation.getContext() instanceof ToolCallingObservationContext toolContext)) {
+            return;
+        }
+
+        ActiveInvocation activeInvocation = activeInvocations.get(toolContext);
+        if (activeInvocation != null && toolName.equals(toolContext.getToolDefinition().name())) {
+            activeInvocation.record(new CustomerReadResult(customerEmails));
         }
     }
 
@@ -94,7 +119,7 @@ public class ToolInvocationCorrelation {
             WorkflowContext workflowContext,
             InvocationBatch invocationBatch
     ) {
-        if (!CustomerDataTools.TOOL_NAME.equals(callback.getToolDefinition().name())) {
+        if (!isVerifiedCustomerReadTool(callback.getToolDefinition().name())) {
             return callback;
         }
 
@@ -119,14 +144,14 @@ public class ToolInvocationCorrelation {
                 Observation observation = observationRegistry.getCurrentObservation();
                 if (observation == null
                         || !(observation.getContext() instanceof ToolCallingObservationContext callContext)) {
-                    warn("Customer data tool invocation has no Spring AI tool-call observation; "
+                    warn("Customer PII lookup has no Spring AI tool-call observation; "
                             + "result correlation is unavailable.");
                     return callback.call(toolInput, toolContext);
                 }
 
                 Optional<InvocationReference> reference = resolveReference(callContext, proposedCalls);
                 if (reference.isEmpty()) {
-                    warn("Customer data tool invocation could not be uniquely correlated to a proposed call.");
+                    warn("Customer PII lookup could not be uniquely correlated to a proposed call.");
                     return callback.call(toolInput, toolContext);
                 }
 
@@ -168,13 +193,23 @@ public class ToolInvocationCorrelation {
             return Optional.empty();
         }
         List<InvocationReference> matches = proposedCalls.stream()
-                .filter(reference -> CustomerDataTools.TOOL_NAME.equals(reference.toolName()))
+                .filter(reference -> isVerifiedCustomerReadTool(reference.toolName()))
                 .filter(reference -> reference.toolName().equals(callContext.getToolDefinition().name()))
                 .filter(reference -> providerToolCallId.equals(reference.guardianToolCallId())
                         || providerToolCallId.equals(reference.providerToolCallId()))
                 .toList();
 
         return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
+    static boolean isVerifiedCustomerReadTool(String toolName) {
+        return CustomerDataTools.TOOL_NAME.equals(toolName) || CustomerTools.isCustomerPiiReadTool(toolName);
+    }
+
+    public record CustomerReadResult(List<String> customerEmails) {
+        public CustomerReadResult {
+            customerEmails = customerEmails == null ? List.of() : List.copyOf(customerEmails);
+        }
     }
 
     record InvocationReference(String guardianToolCallId, String providerToolCallId, String toolName) {}
@@ -213,7 +248,7 @@ public class ToolInvocationCorrelation {
         private final InvocationReference reference;
         private final WorkflowContext workflowContext;
         private final InvocationBatch invocationBatch;
-        private CustomerDataTools.CustomerDataSet typedResult;
+        private Object typedResult;
         private boolean duplicateResult;
 
         private ActiveInvocation(
@@ -226,7 +261,7 @@ public class ToolInvocationCorrelation {
             this.invocationBatch = invocationBatch;
         }
 
-        private void record(CustomerDataTools.CustomerDataSet result) {
+        private void record(Object result) {
             if (typedResult != null || duplicateResult) {
                 duplicateResult = true;
                 typedResult = null;
@@ -263,5 +298,6 @@ public class ToolInvocationCorrelation {
         private void recordOutcome(ToolInvocationOutcome<?> outcome) {
             invocationBatch.recordOutcome(workflowContext, outcome);
         }
+
     }
 }

@@ -3,17 +3,23 @@ package com.agentops.guardian.governance.context;
 import com.agentops.guardian.governance.workflow.WorkflowDefinition;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowType;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
 
 @Component
-@RequiredArgsConstructor
 public class WorkflowContextManager {
 
     private final WorkflowContextHolder contextHolder;
     private final WorkflowDefinitionRegistry workflowDefinitionRegistry;
+
+    public WorkflowContextManager(
+            WorkflowContextHolder contextHolder,
+            WorkflowDefinitionRegistry workflowDefinitionRegistry
+    ) {
+        this.contextHolder = contextHolder;
+        this.workflowDefinitionRegistry = workflowDefinitionRegistry;
+    }
 
     public WorkflowContext start(
             String agentName,
