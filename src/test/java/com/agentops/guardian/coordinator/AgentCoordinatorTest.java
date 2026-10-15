@@ -11,6 +11,16 @@ import com.agentops.guardian.coordinator.context.ExecutionStatus;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
 import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
+import com.agentops.guardian.governance.audit.AuditEvent;
+import com.agentops.guardian.governance.audit.AuditService;
+import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
+import com.agentops.guardian.governance.execution.ApprovedActionGrant;
+import com.agentops.guardian.governance.intervention.GovernanceIntervention;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
+import com.agentops.guardian.governance.risk.RiskLevel;
+import com.agentops.guardian.governance.workflow.WorkflowCapability;
+import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.ReportTools;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -388,6 +398,155 @@ class AgentCoordinatorTest {
         assertEquals(ExecutionStatus.FAILED, execution.get().status());
     }
 
+    @Test
+    void approvalResumesTheOriginalAgentTaskOnceWithItsConversation() {
+        Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null, "EMAIL"
+        ));
+        when(fixture.emailAgent.execute(any(UUID.class), any(AgentCoordinatorRequest.class)))
+                .thenAnswer(invocation -> {
+                    UUID conversationId = invocation.getArgument(0);
+                    throw new ApprovalRequiredException(pendingIntervention(conversationId), "{}");
+                })
+                .thenReturn(AgentResult.success("Email completed."));
+        when(fixture.emailAgent.resumeApprovedAction(
+                any(UUID.class), anyString(), anyString(), anyString(), anyString(), any()
+        )).thenReturn(AgentResult.success("Email completed."));
+
+        AgentCoordinatorResponse pending = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Send the requested email", null, null)
+        );
+
+        assertTrue(pending.approvalRequired());
+        assertNotNull(pending.interventionId());
+        UUID conversationId = UUID.fromString(pending.conversationId());
+        GovernanceIntervention unrelated = pendingIntervention(conversationId, "unrelated-intervention")
+                .approve("reviewer", "Approved.", java.time.Instant.now());
+        assertEquals("FAILED", fixture.coordinator.resumeApproved(unrelated).status());
+        GovernanceIntervention approved = pendingIntervention(conversationId)
+                .approve("reviewer", "Approved.", java.time.Instant.now());
+
+        AgentCoordinator.TaskResumeResult result = fixture.coordinator.resumeApproved(approved);
+
+        assertEquals("COMPLETED", result.status());
+        assertEquals("Email completed.", result.message());
+        verify(fixture.emailAgent, times(1)).execute(eq(conversationId), any(AgentCoordinatorRequest.class));
+        verify(fixture.emailAgent).resumeApprovedAction(
+                eq(conversationId),
+                eq("intervention-resume-1"),
+                eq("send-call-1"),
+                eq("sendEmail"),
+                eq("{}"),
+                isNull()
+        );
+        assertTrue(fixture.memory.history(conversationId).stream()
+                .anyMatch(message -> message.getText().contains("Email completed.")));
+
+        AgentCoordinator.TaskResumeResult duplicate = fixture.coordinator.resumeApproved(approved);
+        assertEquals("FAILED", duplicate.status());
+        verify(fixture.emailAgent, times(1)).execute(any(UUID.class), any(AgentCoordinatorRequest.class));
+        verify(fixture.auditService, times(2)).record(argThat(event ->
+                event.eventType() == com.agentops.guardian.governance.audit.AuditEventType.EXECUTION_OUTCOME
+                        && "RESUME_UNAVAILABLE".equals(event.errorType())
+                        && event.interventionId() != null
+        ));
+    }
+
+    @Test
+    void approvedContinuationUsesCapturedArgumentsInsteadOfRerunningTheAgent() {
+        Fixture fixture = new Fixture(new AgentCoordinator.IntentDecision(
+                AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null, "EMAIL"
+        ));
+        UUID conversationId = fixture.memory.open(null);
+        String arguments = "{\"recipient\":\"approved@example.test\"}";
+        GovernanceIntervention originalIntervention = pendingIntervention(
+                conversationId,
+                "original-intervention",
+                arguments
+        );
+        when(fixture.emailAgent.execute(any(UUID.class), any(AgentCoordinatorRequest.class)))
+                .thenThrow(new ApprovalRequiredException(originalIntervention, arguments));
+        when(fixture.emailAgent.resumeApprovedAction(
+                any(UUID.class), anyString(), anyString(), anyString(), anyString(), any()
+        )).thenReturn(AgentResult.success("Approved action completed."));
+
+        AgentCoordinatorResponse pending = fixture.coordinator.handle(
+                new AgentCoordinatorRequest("Send a different follow-up", null, null, conversationId.toString())
+        );
+        GovernanceIntervention approved = originalIntervention.approve(
+                "reviewer", "Approved.", java.time.Instant.now()
+        );
+
+        AgentCoordinator.TaskResumeResult result = fixture.coordinator.resumeApproved(approved);
+
+        assertEquals("COMPLETED", result.status());
+        assertEquals("Approved action completed.", result.message());
+        verify(fixture.emailAgent).resumeApprovedAction(
+                eq(conversationId),
+                eq("original-intervention"),
+                eq("send-call-1"),
+                eq("sendEmail"),
+                eq(arguments),
+                isNull()
+        );
+    }
+
+    @Test
+    void approvedInterventionWithoutPendingContextIsAuditedAsUnavailable() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
+        UUID conversationId = UUID.randomUUID();
+        GovernanceIntervention approved = pendingIntervention(conversationId)
+                .approve("reviewer", "Approved.", java.time.Instant.now());
+
+        AgentCoordinator.TaskResumeResult result = fixture.coordinator.resumeApproved(approved);
+
+        assertEquals("FAILED", result.status());
+        assertTrue(result.message().contains("unavailable"));
+        verify(fixture.auditService).record(argThat(event ->
+                event.executionStatus() == AuditEvent.ExecutionStatus.FAILED
+                        && event.conversationId().equals(conversationId)
+                        && event.workflowId().equals(approved.workflowId())
+        ));
+        verifyNoInteractions(fixture.emailAgent);
+    }
+
+    private GovernanceIntervention pendingIntervention(UUID conversationId) {
+        return pendingIntervention(conversationId, "intervention-resume-1");
+    }
+
+    private GovernanceIntervention pendingIntervention(UUID conversationId, String interventionId) {
+        return pendingIntervention(conversationId, interventionId, "{}");
+    }
+
+    private GovernanceIntervention pendingIntervention(
+            UUID conversationId,
+            String interventionId,
+            String arguments
+    ) {
+        return new GovernanceIntervention(
+                interventionId,
+                "workflow-approval-1",
+                "send-call-1",
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                WorkflowCapability.SEND_EMAIL,
+                RiskLevel.HIGH,
+                com.agentops.guardian.governance.risk.GovernanceIntervention.REQUIRE_APPROVAL,
+                GovernanceInterventionStatus.PENDING,
+                "External communication requires approval.",
+                java.time.Instant.now(),
+                null,
+                null,
+                null,
+                "EMAIL",
+                WorkflowState.REPORT_GENERATED,
+                com.agentops.guardian.governance.model.DataClassification.ANALYTICAL,
+                conversationId,
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest(arguments)
+        );
+    }
+
     private AgentCoordinator.IntentDecision action(AgentCoordinator.IntentAction action) {
         return new AgentCoordinator.IntentDecision(action, null, null);
     }
@@ -401,6 +560,9 @@ class AgentCoordinatorTest {
         private final CustomerSupportAgent customerSupportAgent = mock(CustomerSupportAgent.class);
         private final EmailAgent emailAgent = mock(EmailAgent.class);
         private final ConversationMemory memory = new ConversationMemory();
+        private final AuditService auditService = mock(AuditService.class);
+        private final PendingAgentTaskRegistry pendingTasks = new PendingAgentTaskRegistry();
+        private final ApprovedActionGrant approvedActionGrant = new ApprovedActionGrant();
         private final ReportTools reportTools = mock(ReportTools.class);
         private final AgentCoordinator coordinator;
 
@@ -427,7 +589,16 @@ class AgentCoordinatorTest {
             } catch (IOException ex) {
                 throw new IllegalStateException(ex);
             }
-            coordinator = new AgentCoordinator(builder, reportAgent, customerSupportAgent, emailAgent, memory);
+            coordinator = new AgentCoordinator(
+                    builder,
+                    reportAgent,
+                    customerSupportAgent,
+                    emailAgent,
+                    memory,
+                    pendingTasks,
+                    approvedActionGrant,
+                    auditService
+            );
             decision(decision);
         }
 

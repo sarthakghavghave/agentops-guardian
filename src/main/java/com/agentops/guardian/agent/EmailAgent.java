@@ -1,6 +1,7 @@
 package com.agentops.guardian.agent;
 
 import com.agentops.guardian.coordinator.agent.AgentResult;
+import com.agentops.guardian.coordinator.agent.AgentResultStatus;
 import com.agentops.guardian.coordinator.context.Artifact;
 import com.agentops.guardian.coordinator.context.ArtifactType;
 import com.agentops.guardian.coordinator.context.ExecutionRecord;
@@ -10,12 +11,15 @@ import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
+import com.agentops.guardian.governance.execution.GuardianToolCallingManager;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.ReportFileStorageService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -46,6 +50,7 @@ public class EmailAgent {
     private final SharedContextService sharedContextService;
     private final ReportFileStorageService reportFileStorageService;
     private final ConversationHistoryAccessService historyAccessService;
+    private final GuardianToolCallingManager guardianToolCallingManager;
 
     @Autowired
     public EmailAgent(
@@ -54,13 +59,15 @@ public class EmailAgent {
             WorkflowContextManager workflowContextManager,
             SharedContextService sharedContextService,
             ReportFileStorageService reportFileStorageService,
-            ConversationHistoryAccessService historyAccessService
+            ConversationHistoryAccessService historyAccessService,
+            GuardianToolCallingManager guardianToolCallingManager
     ) throws IOException {
         this.communicationTools = communicationTools;
         this.workflowContextManager = workflowContextManager;
         this.sharedContextService = sharedContextService;
         this.reportFileStorageService = reportFileStorageService;
         this.historyAccessService = historyAccessService;
+        this.guardianToolCallingManager = guardianToolCallingManager;
         String systemPrompt = new String(
                 new ClassPathResource("prompts/email-agent-system.txt")
                         .getInputStream()
@@ -89,6 +96,26 @@ public class EmailAgent {
                 workflowContextManager,
                 sharedContextService,
                 reportFileStorageService,
+                null,
+                null
+        );
+    }
+
+    public EmailAgent(
+            ChatClient.Builder chatClientBuilder,
+            CommunicationTools communicationTools,
+            WorkflowContextManager workflowContextManager,
+            SharedContextService sharedContextService,
+            ReportFileStorageService reportFileStorageService,
+            ConversationHistoryAccessService historyAccessService
+    ) throws IOException {
+        this(
+                chatClientBuilder,
+                communicationTools,
+                workflowContextManager,
+                sharedContextService,
+                reportFileStorageService,
+                historyAccessService,
                 null
         );
     }
@@ -224,6 +251,8 @@ public class EmailAgent {
         } catch (GovernanceViolationException ex) {
             recordBlocked(conversationId, ex);
             throw ex;
+        } catch (ApprovalRequiredException ex) {
+            throw ex;
         } catch (RuntimeException ex) {
             recordFailed(conversationId, ex);
             throw ex;
@@ -269,6 +298,7 @@ public class EmailAgent {
                     conversationId
             );
         }
+
         communicationTools.beginExecution();
         communicationTools.setAttachmentForExecution(request.attachment());
         try {
@@ -297,6 +327,8 @@ public class EmailAgent {
         } catch (GovernanceViolationException exception) {
             workflowContextManager.block();
             throw exception;
+        } catch (ApprovalRequiredException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             workflowContextManager.fail();
             throw exception;
@@ -304,6 +336,90 @@ public class EmailAgent {
             communicationTools.clearAttachmentForExecution();
             communicationTools.clearExecutionResult();
             workflowContextManager.clear();
+        }
+    }
+
+    public AgentResult resumeApprovedAction(
+            UUID conversationId,
+            String interventionId,
+            String toolCallId,
+            String toolName,
+            String arguments,
+            ReportArtifactHandoff reportHandoff
+    ) {
+        if (guardianToolCallingManager == null) {
+            throw new IllegalStateException("Governed approved-action continuation is unavailable.");
+        }
+        if (!"sendEmail".equals(toolName)) {
+            throw new IllegalArgumentException("Only the approved sendEmail action can use this continuation.");
+        }
+
+        try {
+            if (historyAccessService != null && conversationId != null) {
+                ConversationHistoryAccessService.HistoryAccessResult history =
+                        historyAccessService.readHistory(conversationId);
+                if (!history.allowed()) {
+                    throw new GovernanceViolationException(history.decision().reason());
+                }
+            }
+
+            CommunicationTools.EmailAttachment attachment = reportHandoff == null
+                    ? null
+                    : loadValidatedAttachment(conversationId, reportHandoff);
+            workflowContextManager.start(
+                    "EmailAgent",
+                    WorkflowType.EMAIL_COMMUNICATION,
+                    "Execute the exact approved email action.",
+                    conversationId
+            );
+            communicationTools.beginExecution();
+            communicationTools.setAttachmentForExecution(attachment);
+            try {
+                guardianToolCallingManager.executeApprovedToolCall(
+                        interventionId,
+                        toolCallId,
+                        toolName,
+                        arguments,
+                        ToolCallbacks.from(communicationTools)[0]
+                );
+                List<CommunicationTools.EmailResult> confirmations = communicationTools.executionResults();
+                if (confirmations.size() != 1 || !confirmations.getFirst().accepted()) {
+                    throw new IllegalStateException(
+                            "Communication tool did not confirm exactly one successful email execution."
+                    );
+                }
+                workflowContextManager.complete();
+                String result = "Communication tool accepted the simulated email request. Message ID: "
+                        + confirmations.getFirst().messageId();
+                if (sharedContextService != null && conversationId != null) {
+                    sharedContextService.recordExecution(
+                            conversationId,
+                            ExecutionRecord.success(
+                                    "EmailAgent",
+                                    "SEND_EMAIL",
+                                    "Communication tool accepted the simulated email request",
+                                    reportHandoff == null ? null : reportHandoff.artifactId()
+                            )
+                    );
+                }
+                return AgentResult.success(result);
+            } catch (GovernanceViolationException exception) {
+                workflowContextManager.block();
+                throw exception;
+            } catch (RuntimeException exception) {
+                workflowContextManager.fail();
+                throw exception;
+            } finally {
+                communicationTools.clearAttachmentForExecution();
+                communicationTools.clearExecutionResult();
+                workflowContextManager.clear();
+            }
+        } catch (GovernanceViolationException exception) {
+            recordBlocked(conversationId, exception);
+            throw exception;
+        } catch (RuntimeException exception) {
+            recordFailed(conversationId, exception);
+            throw exception;
         }
     }
 

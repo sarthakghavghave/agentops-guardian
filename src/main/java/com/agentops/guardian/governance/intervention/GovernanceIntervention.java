@@ -27,8 +27,35 @@ public record GovernanceIntervention(
         String workflowNodeId,
         WorkflowState workflowState,
         DataClassification classificationAtCreation,
-        UUID conversationId
+        UUID conversationId,
+        String toolName,
+        String argumentsDigest
 ) {
+
+    public GovernanceIntervention(
+            String interventionId,
+            String workflowId,
+            String toolCallId,
+            String agentName,
+            WorkflowType workflowType,
+            WorkflowCapability capability,
+            RiskLevel riskLevel,
+            com.agentops.guardian.governance.risk.GovernanceIntervention intervention,
+            GovernanceInterventionStatus status,
+            String reason,
+            Instant createdAt,
+            Instant resolvedAt,
+            String resolvedBy,
+            String resolutionReason,
+            String workflowNodeId,
+            WorkflowState workflowState,
+            DataClassification classificationAtCreation,
+            UUID conversationId
+    ) {
+        this(interventionId, workflowId, toolCallId, agentName, workflowType, capability, riskLevel,
+                intervention, status, reason, createdAt, resolvedAt, resolvedBy, resolutionReason,
+                workflowNodeId, workflowState, classificationAtCreation, conversationId, null, null);
+    }
 
     public GovernanceIntervention(
             String interventionId,
@@ -52,7 +79,7 @@ public record GovernanceIntervention(
         this(
                 interventionId, workflowId, toolCallId, agentName, workflowType, capability,
                 riskLevel, intervention, status, reason, createdAt, resolvedAt, resolvedBy,
-                resolutionReason, workflowNodeId, workflowState, classificationAtCreation, null
+                resolutionReason, workflowNodeId, workflowState, classificationAtCreation, null, null, null
         );
     }
 
@@ -123,7 +150,9 @@ public record GovernanceIntervention(
                 workflowNodeId,
                 workflowState,
                 classificationAtCreation,
-                conversationId
+                conversationId,
+                toolName,
+                argumentsDigest
         );
     }
 

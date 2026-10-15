@@ -30,7 +30,6 @@ public class InterventionService {
     private final GovernanceInterventionRepository interventionRepository;
     private final AuditEventRepository auditEventRepository;
     private final AuditService auditService;
-
     public InterventionService(
             GovernanceInterventionRepository interventionRepository,
             AuditEventRepository auditEventRepository,
@@ -45,6 +44,18 @@ public class InterventionService {
     public GovernanceIntervention createPending(
             WorkflowContext context,
             String toolCallId,
+            WorkflowCapability capability,
+            RiskDecision decision
+    ) {
+        return createPending(context, toolCallId, null, null, capability, decision);
+    }
+
+    @Transactional
+    public GovernanceIntervention createPending(
+            WorkflowContext context,
+            String toolCallId,
+            String toolName,
+            String argumentsDigest,
             WorkflowCapability capability,
             RiskDecision decision
     ) {
@@ -80,7 +91,9 @@ public class InterventionService {
                 context.getCurrentNodeId(),
                 context.getCurrentState(),
                 context.getCurrentDataClassification(),
-                context.getConversationId()
+                context.getConversationId(),
+                toolName,
+                argumentsDigest
         );
 
         interventionRepository.save(GovernanceInterventionEntity.from(intervention));
@@ -182,9 +195,10 @@ public class InterventionService {
             currentClassification = latest(events, AuditEventEntity::getClassificationBefore);
         }
 
-        return !intervention.workflowNodeId().equals(currentNodeId)
-                || intervention.workflowState() != currentState
-                || intervention.classificationAtCreation() != currentClassification
+        return (currentNodeId != null && !intervention.workflowNodeId().equals(currentNodeId))
+                || (currentState != null && intervention.workflowState() != currentState)
+                || (currentClassification != null
+                && intervention.classificationAtCreation() != currentClassification)
                 || currentClassification == DataClassification.RAW_CUSTOMER_DATA;
     }
 

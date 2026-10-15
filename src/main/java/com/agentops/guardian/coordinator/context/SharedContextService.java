@@ -15,6 +15,8 @@ public interface SharedContextService {
 
     void recordTurn(UUID conversationId, String userMessage, String assistantContext);
 
+    void recordAssistantResponse(UUID conversationId, String assistantContext);
+
     // 2. Artifact references
     Artifact registerArtifact(UUID conversationId, Artifact artifact);
 

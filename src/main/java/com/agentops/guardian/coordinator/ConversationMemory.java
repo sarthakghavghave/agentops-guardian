@@ -147,6 +147,16 @@ public class ConversationMemory implements SharedContextService {
         chatMemory.add(key, turn);
     }
 
+    @Override
+    public synchronized void recordAssistantResponse(UUID conversationId, String assistantContext) {
+        if (assistantContext == null || assistantContext.isBlank()) {
+            throw new IllegalArgumentException("Assistant response is required.");
+        }
+        String key = requireConversation(conversationId);
+        activeConversations.put(key, clock.instant());
+        chatMemory.add(key, List.of(new AssistantMessage(bound(assistantContext))));
+    }
+
     // --- Artifact References ---
 
     @Override

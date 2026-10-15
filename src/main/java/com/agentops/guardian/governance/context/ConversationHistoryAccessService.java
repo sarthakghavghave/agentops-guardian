@@ -4,6 +4,7 @@ import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.governance.audit.AuditEvent;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.config.GovernanceSettings;
+import com.agentops.guardian.governance.execution.ApprovedActionGrant;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.ToolCallEvent;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
@@ -28,6 +29,7 @@ public class ConversationHistoryAccessService {
     private final AuditService auditService;
     private final SharedContextService sharedContextService;
     private final GovernanceSettings governanceSettings;
+    private final ApprovedActionGrant approvedActionGrant;
 
     @Autowired
     public ConversationHistoryAccessService(
@@ -35,13 +37,32 @@ public class ConversationHistoryAccessService {
             GovernancePolicyEngine governancePolicyEngine,
             AuditService auditService,
             SharedContextService sharedContextService,
-            GovernanceSettings governanceSettings
+            GovernanceSettings governanceSettings,
+            ApprovedActionGrant approvedActionGrant
     ) {
         this.workflowContextManager = workflowContextManager;
         this.governancePolicyEngine = governancePolicyEngine;
         this.auditService = auditService;
         this.sharedContextService = sharedContextService;
         this.governanceSettings = governanceSettings;
+        this.approvedActionGrant = approvedActionGrant;
+    }
+
+    public ConversationHistoryAccessService(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine governancePolicyEngine,
+            AuditService auditService,
+            SharedContextService sharedContextService,
+            GovernanceSettings governanceSettings
+    ) {
+        this(
+                workflowContextManager,
+                governancePolicyEngine,
+                auditService,
+                sharedContextService,
+                governanceSettings,
+                new ApprovedActionGrant()
+        );
     }
 
     public ConversationHistoryAccessService(
@@ -56,7 +77,8 @@ public class ConversationHistoryAccessService {
                 governancePolicyEngine,
                 auditService,
                 sharedContextService,
-                configuredSettings(governanceEnabled)
+                configuredSettings(governanceEnabled),
+                new ApprovedActionGrant()
         );
     }
 
@@ -89,7 +111,7 @@ public class ConversationHistoryAccessService {
         boolean outcomeRecorded = false;
         try {
             workflow.addToolCall(proposedCall);
-            auditService.record(AuditEvent.proposedAction(
+            auditService.record(withApprovalCorrelation(AuditEvent.proposedAction(
                     workflow.getWorkflowId(),
                     workflow.getAgentName(),
                     workflow.getWorkflowType(),
@@ -97,9 +119,9 @@ public class ConversationHistoryAccessService {
                     proposedCall.toolName(),
                     WorkflowCapability.READ_CONVERSATION_HISTORY,
                     1
-            ).withConversationId(conversationId));
+            ).withConversationId(conversationId)));
             GovernanceDecision decision = governancePolicyEngine.evaluate(workflow, proposedCall);
-            auditService.record(AuditEvent.policyDecision(
+            auditService.record(withApprovalCorrelation(AuditEvent.policyDecision(
                     workflow.getWorkflowId(),
                     workflow.getAgentName(),
                     workflow.getWorkflowType(),
@@ -107,7 +129,7 @@ public class ConversationHistoryAccessService {
                     proposedCall.toolName(),
                     WorkflowCapability.READ_CONVERSATION_HISTORY,
                     decision
-            ).withConversationId(conversationId));
+            ).withConversationId(conversationId)));
 
             if (decision.decision() == GovernanceDecision.DecisionType.BLOCK) {
                 recordOutcome(workflow, proposedCall, conversationId, AuditEvent.ExecutionStatus.BLOCKED,
@@ -149,7 +171,7 @@ public class ConversationHistoryAccessService {
             AuditEvent.ExecutionStatus status,
             String reason
     ) {
-        auditService.record(AuditEvent.executionOutcome(
+        auditService.record(withApprovalCorrelation(AuditEvent.executionOutcome(
                 workflow.getWorkflowId(),
                 workflow.getAgentName(),
                 workflow.getWorkflowType(),
@@ -163,7 +185,12 @@ public class ConversationHistoryAccessService {
                 null,
                 null,
                 null
-        ).withConversationId(conversationId));
+        ).withConversationId(conversationId)));
+    }
+
+    private AuditEvent withApprovalCorrelation(AuditEvent event) {
+        String interventionId = approvedActionGrant.currentInterventionId();
+        return interventionId == null ? event : event.withInterventionId(interventionId);
     }
 
     private static GovernanceSettings configuredSettings(boolean enabled) {

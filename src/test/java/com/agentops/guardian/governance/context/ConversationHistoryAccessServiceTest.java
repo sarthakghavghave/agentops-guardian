@@ -4,8 +4,13 @@ import com.agentops.guardian.coordinator.ConversationMemory;
 import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
 import com.agentops.guardian.governance.audit.AuditEvent;
 import com.agentops.guardian.governance.audit.AuditService;
+import com.agentops.guardian.governance.execution.ApprovedActionGrant;
+import com.agentops.guardian.governance.intervention.GovernanceIntervention;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
+import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.model.ToolInvocationOutcome;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.policy.ConfigurablePolicyEvaluator;
 import com.agentops.guardian.governance.policy.GovernancePolicyEngine;
 import com.agentops.guardian.governance.policy.PolicyAction;
@@ -18,6 +23,7 @@ import com.agentops.guardian.governance.policy.PolicyTarget;
 import com.agentops.guardian.governance.workflow.ToolCapabilityRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
+import com.agentops.guardian.governance.workflow.WorkflowType;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -124,6 +130,78 @@ class ConversationHistoryAccessServiceTest {
                 events.getAllValues().get(0).workflowId(),
                 events.getAllValues().get(3).workflowId()
         );
+    }
+
+    @Test
+    void approvedEmailContinuationStillBlocksHistoryAndCorrelatesTheDenial() {
+        PolicyDefinitionRepository repository = mock(PolicyDefinitionRepository.class);
+        when(repository.findAllByEnabledTrueOrderByPriorityAscPolicyIdAsc())
+                .thenReturn(List.of(PolicyDefinitionEntity.from(historyAccessPolicy())));
+        ConversationMemory memory = org.mockito.Mockito.spy(new ConversationMemory());
+        UUID conversationId = memory.open(null);
+        memory.recordTurn(conversationId, "Earlier request", "Earlier assistant response.");
+        memory.recordVerifiedCustomerRead(new VerifiedCustomerReadEvidence(
+                conversationId,
+                "prior-workflow",
+                "prior-customer-read",
+                WorkflowCapability.READ_CUSTOMER_DATA,
+                ToolInvocationOutcome.Status.SUCCEEDED,
+                Instant.now(),
+                List.of("customer@example.test")
+        ));
+        WorkflowContextManager manager = new WorkflowContextManager(
+                new WorkflowContextHolder(), new WorkflowDefinitionRegistry()
+        );
+        AuditService auditService = mock(AuditService.class);
+        ApprovedActionGrant grant = new ApprovedActionGrant();
+        ConversationHistoryAccessService service = new ConversationHistoryAccessService(
+                manager,
+                new GovernancePolicyEngine(new ConfigurablePolicyEvaluator(
+                        repository, new ToolCapabilityRegistry(), memory
+                )),
+                auditService,
+                memory,
+                new com.agentops.guardian.governance.config.GovernanceSettings(),
+                grant
+        );
+        GovernanceIntervention approved = new GovernanceIntervention(
+                "approved-send-email-1",
+                "send-workflow",
+                "send-call",
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                WorkflowCapability.SEND_EMAIL,
+                RiskLevel.HIGH,
+                com.agentops.guardian.governance.risk.GovernanceIntervention.REQUIRE_APPROVAL,
+                GovernanceInterventionStatus.APPROVED,
+                "Approval required.",
+                Instant.now(),
+                Instant.now(),
+                "reviewer",
+                "Approved.",
+                "EMAIL",
+                com.agentops.guardian.governance.context.WorkflowState.REPORT_GENERATED,
+                DataClassification.ANALYTICAL,
+                conversationId,
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest("{}")
+        );
+        ArgumentCaptor<AuditEvent> events = ArgumentCaptor.forClass(AuditEvent.class);
+
+        ConversationHistoryAccessService.HistoryAccessResult access = grant.resume(
+                approved, () -> service.readHistory(conversationId)
+        );
+
+        assertFalse(access.allowed());
+        assertTrue(access.messages().isEmpty());
+        verify(memory, org.mockito.Mockito.never()).history(conversationId);
+        verify(auditService, org.mockito.Mockito.times(3)).record(events.capture());
+        assertTrue(events.getAllValues().stream().allMatch(event ->
+                "approved-send-email-1".equals(event.interventionId())
+                        && conversationId.equals(event.conversationId())
+        ));
+        assertEquals(GovernanceDecision.DecisionType.BLOCK,
+                events.getAllValues().get(1).policyDecision());
     }
 
     @Test

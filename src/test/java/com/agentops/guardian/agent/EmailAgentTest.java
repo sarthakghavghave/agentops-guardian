@@ -10,6 +10,10 @@ import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
+import com.agentops.guardian.governance.risk.RiskDecision;
+import com.agentops.guardian.governance.risk.RiskLevel;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
@@ -42,6 +46,45 @@ class EmailAgentTest {
 
     @TempDir
     Path tempDirectory;
+
+    @Test
+    void resumedEmailAgentPathInvokesTheSimulatedSendTool() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient decisionClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        ChatClient toolClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        when(builder.build()).thenReturn(decisionClient, toolClient);
+        when(decisionClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(sendDecision(
+                        "operator@example.test",
+                        "Meeting invitation",
+                        "Please join our meeting tomorrow."
+                ));
+        CommunicationTools tools = spy(new CommunicationTools());
+        when(toolClient.prompt().user(anyString()).call().content()).thenAnswer(invocation -> {
+            tools.sendEmail(
+                    "operator@example.test",
+                    "Meeting invitation",
+                    "Please join our meeting tomorrow."
+            );
+            return "Tool call completed.";
+        });
+        EmailAgent agent = new EmailAgent(builder, tools, mock(WorkflowContextManager.class));
+
+        AgentResult result = agent.execute(
+                UUID.randomUUID(),
+                new AgentCoordinatorRequest("Send the meeting invitation", "operator@example.test", null)
+        );
+
+        assertTrue(result.isSuccess());
+        assertTrue(result.response().contains("simulated email request"));
+        verify(tools).sendEmail(
+                "operator@example.test",
+                "Meeting invitation",
+                "Please join our meeting tomorrow."
+        );
+    }
 
     @Test
     void llmClarificationForDraftRequestNeverCallsCommunicationTool() throws IOException {
@@ -635,6 +678,34 @@ class EmailAgentTest {
         lifecycle.verify(manager).clear();
         verify(manager, never()).complete();
         verify(manager, never()).fail();
+    }
+
+    @Test
+    void approvalInterruptionClearsWorkflowWithoutMarkingExecutionFailed() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        ChatClient sendClient = mockClientFailure(new ApprovalRequiredException(
+                "send-call-1",
+                new RiskDecision(
+                        RiskLevel.HIGH,
+                        GovernanceIntervention.REQUIRE_APPROVAL,
+                        "Approval is required."
+                )
+        ));
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        when(builder.build()).thenReturn(sendClient);
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        EmailAgent agent = new EmailAgent(builder, mock(CommunicationTools.class), manager);
+        clearInvocations(sendClient);
+
+        assertThrows(ApprovalRequiredException.class, () -> agent.process(sendRequest()));
+
+        InOrder lifecycle = inOrder(manager);
+        lifecycle.verify(manager).start(eq("EmailAgent"), eq(WorkflowType.EMAIL_COMMUNICATION), anyString());
+        lifecycle.verify(manager).clear();
+        verify(manager, never()).fail();
+        verify(manager, never()).block();
+        verify(manager, never()).complete();
     }
 
     @Test

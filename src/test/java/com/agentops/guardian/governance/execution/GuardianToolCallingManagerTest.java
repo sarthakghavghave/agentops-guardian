@@ -282,6 +282,8 @@ class GuardianToolCallingManagerTest {
         when(interventionService.createPending(
                 eq(workflowContext),
                 eq("email-1"),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         )).thenReturn(pendingIntervention("email-1", "intervention-1"));
@@ -307,6 +309,8 @@ class GuardianToolCallingManagerTest {
         when(interventionService.createPending(
                 eq(workflowContext),
                 eq("email-1"),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         )).thenReturn(pendingIntervention("email-1", "intervention-1"));
@@ -333,6 +337,10 @@ class GuardianToolCallingManagerTest {
                         && event.toolCallId().equals("email-1")
                         && event.riskLevel() == RiskLevel.HIGH
                         && event.intervention() == GovernanceIntervention.REQUIRE_APPROVAL
+                        && event.nodeBefore() != null
+                        && "START".equals(event.nodeBefore().nodeId())
+                        && event.stateBefore() == WorkflowState.STARTED
+                        && event.classificationBefore() == DataClassification.ANALYTICAL
         ));
         verify(delegate, never()).executeToolCalls(any(), any());
         assertEquals("START", workflowContext.getCurrentNodeId());
@@ -380,6 +388,8 @@ class GuardianToolCallingManagerTest {
         when(interventionService.createPending(
                 eq(workflowContext),
                 any(),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         )).thenAnswer(invocation -> pendingIntervention(
@@ -401,7 +411,8 @@ class GuardianToolCallingManagerTest {
 
         assertEquals("later-call", nextCall.getToolCallId());
         verify(interventionService).createPending(
-                eq(workflowContext), eq("later-call"), eq(WorkflowCapability.SEND_EMAIL), any()
+                eq(workflowContext), eq("later-call"), anyString(), anyString(),
+                eq(WorkflowCapability.SEND_EMAIL), any()
         );
         verifyNoInteractions(delegate);
         assertEquals("START", workflowContext.getCurrentNodeId());
@@ -416,6 +427,8 @@ class GuardianToolCallingManagerTest {
         when(interventionService.createPending(
                 eq(workflowContext),
                 argThat(callId -> callId != null && !callId.isBlank()),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         )).thenAnswer(invocation -> pendingIntervention(
@@ -437,6 +450,8 @@ class GuardianToolCallingManagerTest {
         verify(interventionService).createPending(
                 eq(workflowContext),
                 eq(exception.getToolCallId()),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         );
@@ -519,6 +534,8 @@ class GuardianToolCallingManagerTest {
         when(interventionService.createPending(
                 eq(workflowContext),
                 eq("email-success"),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         )).thenReturn(pendingIntervention("email-success", "email-intervention"));
@@ -533,6 +550,8 @@ class GuardianToolCallingManagerTest {
         verify(interventionService).createPending(
                 eq(workflowContext),
                 eq("email-success"),
+                anyString(),
+                anyString(),
                 eq(WorkflowCapability.SEND_EMAIL),
                 any()
         );
@@ -543,6 +562,142 @@ class GuardianToolCallingManagerTest {
         verifyNoInteractions(delegate);
         assertEquals(WorkflowType.EMAIL_COMMUNICATION, workflowContext.getWorkflowType());
         assertEquals("START", workflowContext.getCurrentNodeId());
+    }
+
+    @Test
+    void approvedContinuationReevaluatesPolicyAndRiskBeforeMatchingExecution() {
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        ApprovedActionGrant grant = new ApprovedActionGrant();
+        GuardianToolCallingManager resumedGuardian = new GuardianToolCallingManager(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator(),
+                interventionService,
+                new ToolInvocationCorrelation(io.micrometer.observation.ObservationRegistry.NOOP),
+                null,
+                true,
+                grant
+        );
+        String arguments = "{\"city\":\"New Roberttown\",\"maxCustomers\":1}";
+        String approvedArguments = "{\"maxCustomers\":1, \"city\":\"New Roberttown\"}";
+        com.agentops.guardian.governance.intervention.GovernanceIntervention approved =
+                new com.agentops.guardian.governance.intervention.GovernanceIntervention(
+                        "approved-email-intervention",
+                        "workflow-before-approval",
+                        "original-call",
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        WorkflowCapability.SEND_EMAIL,
+                        RiskLevel.HIGH,
+                        GovernanceIntervention.REQUIRE_APPROVAL,
+                        GovernanceInterventionStatus.APPROVED,
+                        "External communication requires approval.",
+                        java.time.Instant.now(),
+                        java.time.Instant.now(),
+                        "reviewer",
+                        "Approved.",
+                        "EMAIL",
+                        WorkflowState.REPORT_GENERATED,
+                        DataClassification.ANALYTICAL,
+                        workflowContext.getConversationId(),
+                        "sendEmail",
+                        ApprovedActionGrant.argumentsDigest(approvedArguments)
+                );
+        when(delegate.executeToolCalls(any(), any()))
+                .thenReturn(successfulResult("resumed-call", "sendEmail"));
+
+        ToolExecutionResult result = grant.resume(
+                approved,
+                () -> resumedGuardian.executeToolCalls(
+                        prompt,
+                        chatResponse(List.of(new AssistantMessage.ToolCall(
+                                "resumed-call", "function", "sendEmail", arguments
+                        )))
+                )
+        );
+
+        assertEquals(successfulResult("resumed-call", "sendEmail"), result);
+        verify(policyEngine).evaluate(eq(workflowContext), argThat(event -> "sendEmail".equals(event.toolName())));
+        verify(interventionService, never()).createPending(
+                any(), anyString(), anyString(), anyString(), any(), any()
+        );
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.RISK_ASSESSMENT
+                        && "approved-email-intervention".equals(event.interventionId())
+        ));
+        verify(delegate).executeToolCalls(any(), any());
+    }
+
+    @Test
+    void approvedContinuationCannotOverridePolicyBlock() {
+        useEmailWorkflowContext();
+        markAnalyticalReportHandoff();
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(policyEngine.evaluate(any(), any())).thenReturn(
+                new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Policy denial.", "NO_SEND")
+        );
+        ApprovedActionGrant grant = new ApprovedActionGrant();
+        GuardianToolCallingManager resumedGuardian = new GuardianToolCallingManager(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator(),
+                interventionService,
+                new ToolInvocationCorrelation(io.micrometer.observation.ObservationRegistry.NOOP),
+                null,
+                true,
+                grant
+        );
+        com.agentops.guardian.governance.intervention.GovernanceIntervention approved =
+                new com.agentops.guardian.governance.intervention.GovernanceIntervention(
+                        "approved-email-intervention",
+                        "workflow-before-approval",
+                        "original-call",
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        WorkflowCapability.SEND_EMAIL,
+                        RiskLevel.HIGH,
+                        GovernanceIntervention.REQUIRE_APPROVAL,
+                        GovernanceInterventionStatus.APPROVED,
+                        "External communication requires approval.",
+                        java.time.Instant.now(),
+                        java.time.Instant.now(),
+                        "reviewer",
+                        "Approved.",
+                        "EMAIL",
+                        WorkflowState.REPORT_GENERATED,
+                        DataClassification.ANALYTICAL,
+                        workflowContext.getConversationId(),
+                        "sendEmail",
+                        ApprovedActionGrant.argumentsDigest("{}")
+                );
+
+        assertThrows(GovernanceViolationException.class, () -> grant.resume(
+                approved,
+                () -> resumedGuardian.executeToolCalls(
+                        prompt,
+                        chatResponse(List.of(new AssistantMessage.ToolCall(
+                                "resumed-call", "function", "sendEmail", "{}"
+                        )))
+                )
+        ));
+
+        verifyNoInteractions(delegate);
+        verify(interventionService, never()).createPending(any(), anyString(), anyString(), anyString(), any(), any());
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.BLOCKED
+                        && "approved-email-intervention".equals(event.interventionId())
+        ));
     }
 
     @Test

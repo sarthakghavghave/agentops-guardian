@@ -33,6 +33,8 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.tool.ToolCallback;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -59,6 +61,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final ToolInvocationCorrelation toolInvocationCorrelation;
     private final SharedContextService sharedContextService;
     private final boolean governanceEnabled;
+    private final ApprovedActionGrant approvedActionGrant;
 
     @Autowired
     public GuardianToolCallingManager(
@@ -70,7 +73,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             InterventionService interventionService,
             ToolInvocationCorrelation toolInvocationCorrelation,
             SharedContextService sharedContextService,
-            GovernanceSettings governanceSettings) {
+            GovernanceSettings governanceSettings,
+            ApprovedActionGrant approvedActionGrant) {
         this(
                 workflowContextManager,
                 policyEngine,
@@ -83,7 +87,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 interventionService,
                 toolInvocationCorrelation,
                 sharedContextService,
-                governanceSettings.isEnabled()
+                governanceSettings.isEnabled(),
+                approvedActionGrant
         );
     }
 
@@ -204,7 +209,8 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 interventionService,
                 toolInvocationCorrelation,
                 sharedContextService,
-                true
+                true,
+                new ApprovedActionGrant()
         );
     }
 
@@ -219,6 +225,33 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             ToolInvocationCorrelation toolInvocationCorrelation,
             SharedContextService sharedContextService,
             boolean governanceEnabled) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                riskEvaluator,
+                interventionService,
+                toolInvocationCorrelation,
+                sharedContextService,
+                governanceEnabled,
+                new ApprovedActionGrant()
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService,
+            RiskEvaluator riskEvaluator,
+            InterventionService interventionService,
+            ToolInvocationCorrelation toolInvocationCorrelation,
+            SharedContextService sharedContextService,
+            boolean governanceEnabled,
+            ApprovedActionGrant approvedActionGrant) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
@@ -229,6 +262,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         this.toolInvocationCorrelation = toolInvocationCorrelation;
         this.sharedContextService = sharedContextService;
         this.governanceEnabled = governanceEnabled;
+        this.approvedActionGrant = approvedActionGrant;
     }
 
     @Override
@@ -324,6 +358,9 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                     workflowContext.validateCapabilityTransition(capability);
 
                     RiskDecision riskDecision = RiskDecision.from(riskEvaluator.assess(workflowContext, capability));
+                    boolean approvedContinuation = approvedActionGrant.consume(
+                            workflowContext, capability, event.toolName(), event.arguments()
+                    );
                     recordAudit(workflowContext, AuditEvent.riskAssessment(
                             workflowContext.getWorkflowId(),
                             workflowContext.getAgentName(),
@@ -332,22 +369,34 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                             event.toolName(),
                             capability,
                             workflowContext.nextActionSequence(),
-                            riskDecision
+                            riskDecision,
+                            new WorkflowNodeSnapshot(
+                                    workflowContext.getCurrentNodeId(),
+                                    workflowContext.getCurrentState(),
+                                    capability
+                            ),
+                            workflowContext.getCurrentDataClassification()
                     ));
 
                     if (riskDecision.intervention() == GovernanceIntervention.REQUIRE_APPROVAL) {
-                        if (interventionService == null) {
+                        if (approvedContinuation) {
+                            System.out.println("[GUARDIAN] Revalidated approved action: " + event.toolName());
+                        } else if (interventionService == null) {
                             throw new IllegalStateException("Intervention service is required for approval decisions.");
+                        } else {
+                            com.agentops.guardian.governance.intervention.GovernanceIntervention intervention =
+                                interventionService.createPending(
+                                    workflowContext,
+                                    event.toolCallId(),
+                                    event.toolName(),
+                                    ApprovedActionGrant.argumentsDigest(event.arguments()),
+                                    capability,
+                                    riskDecision
+                            );
+                            throw new ApprovalRequiredException(intervention, event.arguments());
                         }
-                        com.agentops.guardian.governance.intervention.GovernanceIntervention intervention =
-                            interventionService.createPending(
-                                workflowContext,
-                                event.toolCallId(),
-                                capability,
-                                riskDecision
-                        );
-                        throw new ApprovalRequiredException(intervention);
                     }
+
                     if (riskDecision.intervention() == GovernanceIntervention.BLOCK) {
                         throw new GovernanceViolationException(
                                 "Risk intervention BLOCK: " + riskDecision.reason()
@@ -537,6 +586,39 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         return delegate.executeToolCalls(prompt, chatResponse);
     }
 
+    public ToolExecutionResult executeApprovedToolCall(
+            String interventionId,
+            String toolCallId,
+            String toolName,
+            String arguments,
+            ToolCallback callback
+    ) {
+        if (interventionId == null || interventionId.isBlank()
+                || !interventionId.equals(approvedActionGrant.currentInterventionId())
+                || toolCallId == null || toolCallId.isBlank()
+                || toolName == null || toolName.isBlank()
+                || arguments == null
+                || callback == null
+                || !toolName.equals(callback.getToolDefinition().name())) {
+            throw new IllegalArgumentException("Approved tool continuation context is incomplete or mismatched.");
+        }
+
+        AssistantMessage assistantMessage = new AssistantMessage("")
+                .mutate()
+                .toolCalls(List.of(new AssistantMessage.ToolCall(
+                        toolCallId,
+                        "function",
+                        toolName,
+                        arguments
+                )))
+                .build();
+        Prompt prompt = new Prompt(
+                List.of(new UserMessage("Continue the exact approved tool action.")),
+                ToolCallingChatOptions.builder().toolCallbacks(callback).build()
+        );
+        return executeToolCalls(prompt, new ChatResponse(List.of(new Generation(assistantMessage))));
+    }
+
     private void advanceAndAuditTransition(
             WorkflowContext workflowContext,
             ProposedToolCall proposedToolCall,
@@ -572,7 +654,12 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     }
 
     private void recordAudit(WorkflowContext workflowContext, AuditEvent event) {
-        auditService.record(event.withConversationId(workflowContext.getConversationId()));
+        AuditEvent correlated = event.withConversationId(workflowContext.getConversationId());
+        String interventionId = approvedActionGrant.currentInterventionId();
+        if (interventionId != null && correlated.interventionId() == null) {
+            correlated = correlated.withInterventionId(interventionId);
+        }
+        auditService.record(correlated);
     }
 
     private void recordVerifiedCustomerReadEvidence(
@@ -628,7 +715,6 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         + (workflowContext != null ? workflowContext.getAgentName() : "NONE")
                         + "\n  Tool: " + event.toolName()
                         + "\n  Call ID: " + event.toolCallId()
-                        + "\n  Arguments: " + event.arguments()
                         + "\n  Type: " + event.toolType()
                         + "\n  Timestamp: " + event.timestamp()
         );

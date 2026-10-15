@@ -97,6 +97,17 @@ public record AuditEvent(
         );
     }
 
+    public AuditEvent withInterventionId(String value) {
+        return new AuditEvent(
+                workflowId, agentName, workflowType, timestamp, eventType, toolCallId, toolName,
+                capability, sequence, policyDecision, policyId, policyReason, executionStatus,
+                errorType, errorMessage, nodeBefore, nodeAfter, stateBefore, stateAfter,
+                classificationBefore, classificationAfter, transformationType, riskLevel,
+                intervention, riskReason, value, interventionStatus, resolvedBy,
+                resolutionReason, conversationId
+        );
+    }
+
         public AuditEvent(
             String workflowId,
             String agentName,
@@ -388,17 +399,43 @@ public record AuditEvent(
         );
     }
 
-            public static AuditEvent riskAssessment(
-                String workflowId,
-                String agentName,
-                WorkflowType workflowType,
-                String toolCallId,
-                String toolName,
-                WorkflowCapability capability,
-                Integer sequence,
-                RiskDecision riskDecision
-            ) {
-            return new AuditEvent(
+    public static AuditEvent riskAssessment(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            RiskDecision riskDecision
+    ) {
+        return riskAssessment(
+                workflowId,
+                agentName,
+                workflowType,
+                toolCallId,
+                toolName,
+                capability,
+                sequence,
+                riskDecision,
+                null,
+                null
+        );
+    }
+
+    public static AuditEvent riskAssessment(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            String toolCallId,
+            String toolName,
+            WorkflowCapability capability,
+            Integer sequence,
+            RiskDecision riskDecision,
+            WorkflowNodeSnapshot workflowSnapshot,
+            DataClassification classification
+    ) {
+        return new AuditEvent(
                 workflowId,
                 agentName,
                 workflowType,
@@ -414,18 +451,18 @@ public record AuditEvent(
                 null,
                 null,
                 null,
+                workflowSnapshot,
                 null,
+                workflowSnapshot == null ? null : workflowSnapshot.state(),
                 null,
-                null,
-                null,
-                null,
+                classification,
                 null,
                 null,
                 riskDecision.riskLevel(),
                 riskDecision.intervention(),
                 riskDecision.reason()
-            );
-            }
+        );
+    }
 
     public static AuditEvent workflowTransition(
             String workflowId,
@@ -488,7 +525,7 @@ public record AuditEvent(
                 Instant.now(),
                 eventType,
                 intervention.toolCallId(),
-                null,
+                intervention.toolName(),
                 intervention.capability(),
                 null,
                 null,

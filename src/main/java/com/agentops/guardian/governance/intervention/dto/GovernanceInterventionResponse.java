@@ -13,6 +13,7 @@ public record GovernanceInterventionResponse(
         String interventionId,
         String workflowId,
         String toolCallId,
+        String toolName,
         String agentName,
         WorkflowType workflowType,
         WorkflowCapability capability,
@@ -24,7 +25,9 @@ public record GovernanceInterventionResponse(
         Instant resolvedAt,
         String resolvedBy,
         String resolutionReason,
-        UUID conversationId
+        UUID conversationId,
+        String taskStatus,
+        String taskMessage
 ) {
 
     public static GovernanceInterventionResponse from(GovernanceIntervention intervention) {
@@ -32,6 +35,7 @@ public record GovernanceInterventionResponse(
                 intervention.interventionId(),
                 intervention.workflowId(),
                 intervention.toolCallId(),
+                intervention.toolName(),
                 intervention.agentName(),
                 intervention.workflowType(),
                 intervention.capability(),
@@ -43,7 +47,17 @@ public record GovernanceInterventionResponse(
                 intervention.resolvedAt(),
                 intervention.resolvedBy(),
                 intervention.resolutionReason(),
-                intervention.conversationId()
+                intervention.conversationId(),
+                null,
+                null
+        );
+    }
+
+    public GovernanceInterventionResponse withTaskResult(String status, String message) {
+        return new GovernanceInterventionResponse(
+                interventionId, workflowId, toolCallId, toolName, agentName, workflowType, capability,
+                riskLevel, intervention, this.status, reason, createdAt, resolvedAt, resolvedBy,
+                resolutionReason, conversationId, status, message
         );
     }
 }

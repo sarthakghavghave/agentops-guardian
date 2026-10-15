@@ -7,6 +7,7 @@ import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.tool.ReportTools;
@@ -138,6 +139,8 @@ public class CustomerReportAgent {
                 );
             }
             throw ex;
+        } catch (ApprovalRequiredException ex) {
+            throw ex;
         } catch (RuntimeException ex) {
             if (sharedContextService != null && conversationId != null) {
                 sharedContextService.recordExecution(
@@ -170,6 +173,9 @@ public class CustomerReportAgent {
 
         } catch (GovernanceViolationException ex) {
             workflowContextManager.block();
+            throw ex;
+
+        } catch (ApprovalRequiredException ex) {
             throw ex;
 
         } catch (RuntimeException ex) {

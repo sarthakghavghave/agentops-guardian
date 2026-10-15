@@ -6,6 +6,7 @@ import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.context.WorkflowContext;
 import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.execution.ApprovedActionGrant;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.risk.RiskDecision;
 import com.agentops.guardian.governance.risk.RiskLevel;
@@ -67,6 +68,30 @@ class InterventionServiceTest {
     }
 
     @Test
+    void persistsOnlyAHashOfTheProposedActionForSafeRevalidation() {
+        String digest = ApprovedActionGrant.argumentsDigest("{\"recipient\":\"customer@example.test\"}");
+        GovernanceIntervention created = service.createPending(
+                reportWorkflow(),
+                "call-specific-2",
+                "sendEmail",
+                digest,
+                WorkflowCapability.SEND_EMAIL,
+                highRiskDecision()
+        );
+
+        GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(created);
+        GovernanceIntervention restored = entity.toDomain();
+        assertEquals("sendEmail", restored.toolName());
+        assertEquals(digest, restored.argumentsDigest());
+        assertFalse(restored.argumentsDigest().contains("customer@example.test"));
+        verify(auditService).record(org.mockito.ArgumentMatchers.argThat(event ->
+                event.eventType() == AuditEventType.INTERVENTION_CREATED
+                        && "sendEmail".equals(event.toolName())
+                        && "call-specific-2".equals(event.toolCallId())
+        ));
+    }
+
+    @Test
     void approvesPendingInterventionAndAuditsResolution() {
         GovernanceIntervention pending = pending();
         GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
@@ -88,6 +113,64 @@ class InterventionServiceTest {
                         && pending.interventionId().equals(event.interventionId())
                         && event.interventionStatus() == GovernanceInterventionStatus.APPROVED
         ));
+    }
+
+    @Test
+    void approvesPendingEmailWhenAuditContainsItsApprovalTimeSnapshot() {
+        WorkflowContext context = emailWorkflow();
+        GovernanceIntervention pending = service.createPending(
+                context,
+                "email-call",
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest("{\"recipient\":\"customer@example.test\"}"),
+                WorkflowCapability.SEND_EMAIL,
+                highRiskDecision()
+        );
+        GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
+        when(interventionRepository.findByInterventionId(pending.interventionId()))
+                .thenReturn(java.util.Optional.of(entity));
+        AuditEventEntity unchanged = currentTrajectoryEvent("START", WorkflowState.STARTED, null);
+        when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
+                .thenReturn(List.of(unchanged));
+
+        GovernanceIntervention approved = service.approve(
+                pending.interventionId(),
+                "reviewer",
+                "Approved email."
+        );
+
+        assertEquals(GovernanceInterventionStatus.APPROVED, approved.status());
+        assertEquals("sendEmail", approved.toolName());
+        assertEquals(WorkflowState.STARTED, approved.workflowState());
+        assertEquals("START", approved.workflowNodeId());
+        verify(interventionRepository).saveAndFlush(entity);
+    }
+
+    @Test
+    void approvesLegacyPendingEmailWhenAuditHasNoTrajectorySnapshot() {
+        GovernanceIntervention pending = service.createPending(
+                emailWorkflow(),
+                "email-call",
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest("{}"),
+                WorkflowCapability.SEND_EMAIL,
+                highRiskDecision()
+        );
+        GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
+        when(interventionRepository.findByInterventionId(pending.interventionId()))
+                .thenReturn(java.util.Optional.of(entity));
+        AuditEventEntity sparseAuditEvent = currentTrajectoryEvent(null, null, null);
+        when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
+                .thenReturn(List.of(sparseAuditEvent));
+
+        GovernanceIntervention approved = service.approve(
+                pending.interventionId(),
+                "reviewer",
+                "Approve pending email."
+        );
+
+        assertEquals(GovernanceInterventionStatus.APPROVED, approved.status());
+        verify(interventionRepository).saveAndFlush(entity);
     }
 
     @Test
@@ -114,6 +197,20 @@ class InterventionServiceTest {
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
                 () -> service.reject(approved.interventionId(), "another-reviewer", "Changed decision.")
+        );
+
+        assertEquals(409, exception.getStatusCode().value());
+    }
+
+    @Test
+    void refusesApprovalOfAnAlreadyResolvedIntervention() {
+        GovernanceIntervention rejected = pending().reject("reviewer", "Rejected.", Instant.now());
+        when(interventionRepository.findByInterventionId(rejected.interventionId()))
+                .thenReturn(java.util.Optional.of(GovernanceInterventionEntity.from(rejected)));
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> service.approve(rejected.interventionId(), "reviewer", "Approve after rejection.")
         );
 
         assertEquals(409, exception.getStatusCode().value());
@@ -158,6 +255,33 @@ class InterventionServiceTest {
     }
 
     @Test
+    void expiresPendingEmailWhenItsClassificationChangesToRawCustomerData() {
+        GovernanceIntervention pending = service.createPending(
+                emailWorkflow(),
+                "email-call",
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest("{}"),
+                WorkflowCapability.SEND_EMAIL,
+                highRiskDecision()
+        );
+        GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
+        when(interventionRepository.findByInterventionId(pending.interventionId()))
+                .thenReturn(java.util.Optional.of(entity));
+        AuditEventEntity changedClassification =
+                currentTrajectoryEvent("START", WorkflowState.STARTED, DataClassification.RAW_CUSTOMER_DATA);
+        when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
+                .thenReturn(List.of(changedClassification));
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> service.approve(pending.interventionId(), "reviewer", "Approve stale email.")
+        );
+
+        assertEquals(409, exception.getStatusCode().value());
+        assertEquals(GovernanceInterventionStatus.EXPIRED, entity.toDomain().status());
+    }
+
+    @Test
     void entityContainsNoRuntimePayloadFields() {
         Set<String> fields = java.util.Arrays.stream(GovernanceInterventionEntity.class.getDeclaredFields())
                 .map(java.lang.reflect.Field::getName)
@@ -195,6 +319,20 @@ class InterventionServiceTest {
                 Instant.now()
         ));
         return context;
+    }
+
+    private WorkflowContext emailWorkflow() {
+        WorkflowDefinition definition = new WorkflowDefinition(
+                WorkflowType.EMAIL_COMMUNICATION,
+                Set.of(WorkflowCapability.SEND_EMAIL),
+                WorkflowGraph.emailCommunicationGraph()
+        );
+        return new WorkflowContext(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send approved email",
+                definition
+        );
     }
 
     private RiskDecision highRiskDecision() {

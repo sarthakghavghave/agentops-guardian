@@ -43,6 +43,12 @@ public class GovernanceInterventionEntity {
     @Column(name = "conversation_id", updatable = false)
     private UUID conversationId;
 
+    @Column(name = "tool_name", length = 200, updatable = false)
+    private String toolName;
+
+    @Column(name = "arguments_digest", length = 64, updatable = false)
+    private String argumentsDigest;
+
     @Column(name = "tool_call_id", nullable = false, length = 200, updatable = false)
     private String toolCallId;
 
@@ -108,6 +114,8 @@ public class GovernanceInterventionEntity {
         interventionId = intervention.interventionId();
         workflowId = intervention.workflowId();
         conversationId = intervention.conversationId();
+        toolName = intervention.toolName();
+        argumentsDigest = intervention.argumentsDigest();
         toolCallId = intervention.toolCallId();
         agentName = intervention.agentName();
         workflowType = intervention.workflowType();
@@ -144,7 +152,9 @@ public class GovernanceInterventionEntity {
                 workflowNodeId,
                 workflowState,
                 classificationAtCreation,
-                conversationId
+                conversationId,
+                toolName,
+                argumentsDigest
         );
     }
 }

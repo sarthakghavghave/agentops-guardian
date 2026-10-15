@@ -10,9 +10,19 @@ import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorResponse;
 import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
+import com.agentops.guardian.coordinator.agent.AgentResultStatus;
+import com.agentops.guardian.governance.audit.AuditEvent;
+import com.agentops.guardian.governance.audit.AuditService;
+import com.agentops.guardian.governance.audit.NoOpAuditService;
+import com.agentops.guardian.governance.exception.ApprovalRequiredException;
+import com.agentops.guardian.governance.exception.GovernanceViolationException;
+import com.agentops.guardian.governance.execution.ApprovedActionGrant;
+import com.agentops.guardian.governance.intervention.GovernanceIntervention;
+import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -61,6 +71,30 @@ public class AgentCoordinator {
     private final CustomerSupportAgent customerSupportAgent;
     private final EmailAgent emailAgent;
     private final SharedContextService sharedContextService;
+    private final PendingAgentTaskRegistry pendingAgentTaskRegistry;
+    private final ApprovedActionGrant approvedActionGrant;
+    private final AuditService auditService;
+
+    @Autowired
+    public AgentCoordinator(
+            ChatClient.Builder chatClientBuilder,
+            CustomerReportAgent customerReportAgent,
+            CustomerSupportAgent customerSupportAgent,
+            EmailAgent emailAgent,
+            SharedContextService sharedContextService,
+            PendingAgentTaskRegistry pendingAgentTaskRegistry,
+            ApprovedActionGrant approvedActionGrant,
+            AuditService auditService
+    ) {
+        this.intentClient = chatClientBuilder.build();
+        this.customerReportAgent = customerReportAgent;
+        this.customerSupportAgent = customerSupportAgent;
+        this.emailAgent = emailAgent;
+        this.sharedContextService = sharedContextService;
+        this.pendingAgentTaskRegistry = pendingAgentTaskRegistry;
+        this.approvedActionGrant = approvedActionGrant;
+        this.auditService = auditService;
+    }
 
     public AgentCoordinator(
             ChatClient.Builder chatClientBuilder,
@@ -69,11 +103,16 @@ public class AgentCoordinator {
             EmailAgent emailAgent,
             SharedContextService sharedContextService
     ) {
-        this.intentClient = chatClientBuilder.build();
-        this.customerReportAgent = customerReportAgent;
-        this.customerSupportAgent = customerSupportAgent;
-        this.emailAgent = emailAgent;
-        this.sharedContextService = sharedContextService;
+        this(
+                chatClientBuilder,
+                customerReportAgent,
+                customerSupportAgent,
+                emailAgent,
+                sharedContextService,
+                new PendingAgentTaskRegistry(),
+                new ApprovedActionGrant(),
+                new NoOpAuditService()
+        );
     }
 
     public AgentCoordinatorResponse handle(AgentCoordinatorRequest request) {
@@ -122,7 +161,26 @@ public class AgentCoordinator {
     }
 
     private AgentCoordinatorResponse generalResponse(AgentCoordinatorRequest request, UUID conversationId) {
-        String supportResponse = customerSupportAgent.chat(conversationId, request.message());
+        String supportResponse;
+        try {
+            supportResponse = customerSupportAgent.chat(conversationId, request.message());
+        } catch (ApprovalRequiredException exception) {
+            GovernanceIntervention intervention = exception.getIntervention();
+            requirePersistedIntervention(intervention, exception);
+            pendingAgentTaskRegistry.register(
+                    intervention,
+                    request,
+                    IntentAction.GENERAL_RESPONSE,
+                    AgentTarget.CUSTOMER_SUPPORT.name(),
+                    null,
+                    exception.getProposedToolArguments()
+            );
+            return AgentCoordinatorResponse.approvalRequired(
+                    IntentAction.GENERAL_RESPONSE,
+                    intervention.interventionId(),
+                    conversationId.toString()
+            );
+        }
         if (supportResponse == null || supportResponse.isBlank()) {
             throw new IllegalStateException("Customer support agent returned no response.");
         }
@@ -187,23 +245,51 @@ public class AgentCoordinator {
     ) {
         AgentTarget target = resolveTargetAgent(decision);
         AgentResult result;
-        if (target == AgentTarget.EMAIL && decision.reportArtifactId() != null
-                && !decision.reportArtifactId().isBlank()) {
-            Optional<ReportArtifactHandoff> reportHandoff = resolveReportHandoff(
-                    conversationId,
-                    decision.reportArtifactId()
-            );
-            if (reportHandoff.isEmpty()) {
-                return AgentCoordinatorResponse.clarification(
-                        "The requested report is not available as a registered PDF in this conversation.",
-                        conversationId.toString()
+        try {
+            if (target == AgentTarget.CUSTOMER_SUPPORT) {
+                String supportResponse = customerSupportAgent.chat(conversationId, request.message());
+                if (supportResponse == null || supportResponse.isBlank()) {
+                    throw new IllegalStateException("Customer support agent returned no response.");
+                }
+                return AgentCoordinatorResponse.completed(
+                        decision.action(), supportResponse, conversationId.toString()
                 );
             }
-            result = emailAgent.execute(conversationId, request, reportHandoff.get());
-        } else if (target == AgentTarget.EMAIL) {
-            result = emailAgent.execute(conversationId, request);
-        } else {
-            result = customerReportAgent.execute(conversationId, request);
+            if (target == AgentTarget.EMAIL && decision.reportArtifactId() != null
+                    && !decision.reportArtifactId().isBlank()) {
+                Optional<ReportArtifactHandoff> reportHandoff = resolveReportHandoff(
+                        conversationId,
+                        decision.reportArtifactId()
+                );
+                if (reportHandoff.isEmpty()) {
+                    return AgentCoordinatorResponse.clarification(
+                            "The requested report is not available as a registered PDF in this conversation.",
+                            conversationId.toString()
+                    );
+                }
+                result = emailAgent.execute(conversationId, request, reportHandoff.get());
+            } else if (target == AgentTarget.EMAIL) {
+                result = emailAgent.execute(conversationId, request);
+            } else {
+                result = customerReportAgent.execute(conversationId, request);
+            }
+        } catch (ApprovalRequiredException exception) {
+            GovernanceIntervention intervention = exception.getIntervention();
+            requirePersistedIntervention(intervention, exception);
+            pendingAgentTaskRegistry.register(
+                    intervention,
+                    request,
+                    decision.action(),
+                    target.name(),
+                    decision.reportArtifactId(),
+                    exception.getProposedToolArguments()
+            );
+            return AgentCoordinatorResponse.approvalRequired(
+                    decision.action(),
+                    intervention.toolName(),
+                    intervention.interventionId(),
+                    conversationId.toString()
+            );
         }
         if (result == null || result.status() == null) {
             throw new IllegalStateException("Selected agent returned no valid execution status.");
@@ -232,11 +318,154 @@ public class AgentCoordinator {
         };
     }
 
+    public TaskResumeResult resumeApproved(GovernanceIntervention intervention) {
+        if (intervention == null || intervention.status() != GovernanceInterventionStatus.APPROVED) {
+            throw new IllegalArgumentException("Only an approved intervention can resume a task.");
+        }
+        PendingAgentTaskRegistry.Claim claim =
+                pendingAgentTaskRegistry.claim(intervention.interventionId());
+        if (claim.status() != PendingAgentTaskRegistry.ClaimStatus.FOUND) {
+            String reason = claim.status() == PendingAgentTaskRegistry.ClaimStatus.EXPIRED
+                    ? "Pending task context expired before approval could resume it."
+                    : "Pending task context is unavailable; the application may have restarted or evicted it.";
+            recordResumeFailure(intervention, reason);
+            return new TaskResumeResult("FAILED", reason, null);
+        }
+
+        PendingAgentTaskRegistry.PendingTask task = claim.task();
+        if (!matches(intervention, task)) {
+            String reason = "Pending task context does not match the approved intervention.";
+            recordResumeFailure(intervention, reason);
+            return new TaskResumeResult("FAILED", reason, null);
+        }
+
+        try {
+            UUID conversationId = task.conversationId();
+            AgentCoordinatorResponse response;
+            if (AgentTarget.EMAIL.name().equals(task.targetAgent())) {
+                Optional<ReportArtifactHandoff> reportHandoff = task.reportArtifactId() == null
+                        || task.reportArtifactId().isBlank()
+                        ? Optional.empty()
+                        : resolveReportHandoff(conversationId, task.reportArtifactId());
+                if (task.reportArtifactId() != null && !task.reportArtifactId().isBlank()
+                        && reportHandoff.isEmpty()) {
+                    return new TaskResumeResult(
+                            "FAILED",
+                            "The approved email's registered report attachment is no longer available.",
+                            null
+                    );
+                }
+                AgentResult result = approvedActionGrant.resume(
+                        intervention,
+                        () -> emailAgent.resumeApprovedAction(
+                                conversationId,
+                                intervention.interventionId(),
+                                task.toolCallId(),
+                                task.toolName(),
+                                task.arguments(),
+                                reportHandoff.orElse(null)
+                        )
+                );
+                if (result == null || result.status() != AgentResultStatus.SUCCESS
+                        || result.response() == null || result.response().isBlank()) {
+                    throw new IllegalStateException("Approved email action did not complete successfully.");
+                }
+                response = AgentCoordinatorResponse.completed(
+                        task.action(),
+                        result.response(),
+                        conversationId.toString()
+                );
+            } else {
+                String reason = "Exact approved-action continuation is not supported for tool "
+                        + task.toolName() + ".";
+                recordResumeFailure(intervention, reason);
+                return new TaskResumeResult("FAILED", reason, null);
+            }
+            sharedContextService.recordAssistantResponse(conversationId, response.response());
+            String status;
+            if (response.approvalRequired()) {
+                status = response.interventionId() != null
+                        && !response.interventionId().equals(intervention.interventionId())
+                        ? "PENDING_APPROVAL"
+                        : "FAILED";
+            } else if (response.clarificationRequired()) {
+                status = "CLARIFICATION_REQUIRED";
+            } else {
+                status = "COMPLETED";
+            }
+            return new TaskResumeResult(
+                    status,
+                    response.response(),
+                    response
+            );
+        } catch (GovernanceViolationException exception) {
+            return new TaskResumeResult("BLOCKED", "Resume stopped by governance policy.", null);
+        } catch (RuntimeException exception) {
+            recordResumeFailure(intervention, exception.getMessage());
+            return new TaskResumeResult(
+                    "FAILED",
+                    firstNonBlank(exception.getMessage(), "Resumed task execution failed."),
+                    null
+            );
+        }
+    }
+
+    private boolean matches(GovernanceIntervention intervention, PendingAgentTaskRegistry.PendingTask task) {
+        return intervention.interventionId().equals(task.interventionId())
+                && task.conversationId() != null
+                && intervention.workflowId().equals(task.sourceWorkflowId())
+                && intervention.workflowType() == task.workflowType()
+                && intervention.agentName().equals(task.agentName())
+                && intervention.toolCallId().equals(task.toolCallId())
+                && intervention.capability() == task.capability()
+                && java.util.Objects.equals(intervention.conversationId(), task.conversationId())
+                && java.util.Objects.equals(intervention.toolName(), task.toolName())
+                && java.util.Objects.equals(intervention.argumentsDigest(), task.argumentsDigest())
+                && java.util.Objects.equals(
+                        intervention.argumentsDigest(),
+                        ApprovedActionGrant.argumentsDigest(task.arguments())
+                );
+    }
+
+    private void recordResumeFailure(GovernanceIntervention intervention, String reason) {
+        auditService.record(AuditEvent.executionOutcome(
+                intervention.workflowId(),
+                intervention.agentName(),
+                intervention.workflowType(),
+                intervention.toolCallId(),
+                intervention.toolName(),
+                intervention.capability(),
+                AuditEvent.ExecutionStatus.FAILED,
+                "RESUME_UNAVAILABLE",
+                firstNonBlank(reason, "Resumed task execution failed."),
+                null,
+                null,
+                null,
+                null
+        ).withConversationId(intervention.conversationId())
+                .withInterventionId(intervention.interventionId()));
+    }
+
+    public record TaskResumeResult(String status, String message, AgentCoordinatorResponse response) {}
+
+    private void requirePersistedIntervention(
+            GovernanceIntervention intervention,
+            ApprovalRequiredException exception
+    ) {
+        if (intervention == null) {
+            throw new IllegalStateException(
+                    "Approval interruption has no persisted intervention to resume.",
+                    exception
+            );
+        }
+    }
+
     private AgentTarget resolveTargetAgent(IntentDecision decision) {
         AgentTarget target;
         if (decision.targetAgent() != null && !decision.targetAgent().isBlank()) {
             target = switch (decision.targetAgent().strip().toUpperCase(java.util.Locale.ROOT)) {
                 case "CUSTOMER_REPORT", "CUSTOMERREPORTAGENT" -> AgentTarget.CUSTOMER_REPORT;
+                case "CUSTOMER_SUPPORT", "CUSTOMERSUPPORTAGENT" -> AgentTarget.CUSTOMER_SUPPORT;
                 case "EMAIL", "EMAILAGENT" -> AgentTarget.EMAIL;
                 default -> throw new IllegalArgumentException(
                         "Unknown or unsupported agent: " + decision.targetAgent()
@@ -250,7 +479,8 @@ public class AgentCoordinator {
             };
         }
         if ((decision.action() == IntentAction.REPORT_REQUEST && target != AgentTarget.CUSTOMER_REPORT)
-                || (decision.action() == IntentAction.EMAIL_REQUEST && target != AgentTarget.EMAIL)) {
+                || (decision.action() == IntentAction.EMAIL_REQUEST && target != AgentTarget.EMAIL)
+                || (decision.action() == IntentAction.GENERAL_RESPONSE && target != AgentTarget.CUSTOMER_SUPPORT)) {
             throw new IllegalArgumentException(
                     "Selected agent is incompatible with routing action " + decision.action() + "."
             );
@@ -332,6 +562,7 @@ public class AgentCoordinator {
     }
 
     private enum AgentTarget {
+        CUSTOMER_SUPPORT,
         CUSTOMER_REPORT,
         EMAIL
     }
