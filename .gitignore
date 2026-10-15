@@ -35,6 +35,7 @@ build/
 # Environment/secrets
 .env
 *.env
+application-local.properties
 
 # Data
 /data/*.csv
