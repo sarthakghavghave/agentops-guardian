@@ -1,4 +1,4 @@
-export type WorkflowType = 'CUSTOMER_SUPPORT' | 'CUSTOMER_REPORTING'
+export type WorkflowType = 'CUSTOMER_SUPPORT' | 'CUSTOMER_REPORTING' | 'EMAIL_COMMUNICATION'
 
 export type WorkflowState =
   | 'STARTED'

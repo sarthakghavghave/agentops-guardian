@@ -7,6 +7,7 @@ import { useDashboardQueries } from '../../hooks/useDashboardQueries'
 import type { WorkflowSummaryResponse } from '../../types/workflow'
 import { LiveWorkflowPanel } from './LiveWorkflowPanel'
 import { OtherWorkflowsPanel } from './OtherWorkflowsPanel'
+import { ConversationHistoryPanel } from './ConversationHistoryPanel'
 
 function latestFirst(
   workflows: WorkflowSummaryResponse[],
@@ -108,6 +109,12 @@ export function DashboardOverview({ liveState }: { liveState: LiveGovernanceStat
         hasLiveActivity={latestLiveEvent !== undefined}
         loadingSummaries={workflows.isPending}
         summariesUnavailable={workflows.isError}
+      />
+
+      <ConversationHistoryPanel
+        summaries={workflows.data ?? []}
+        summariesError={workflows.error}
+        summariesPending={workflows.isPending}
       />
 
       {otherWorkflows.length > 0 && <OtherWorkflowsPanel workflows={otherWorkflows} />}

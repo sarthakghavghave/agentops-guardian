@@ -133,7 +133,10 @@ export function parseLiveGovernanceEvent(data: string): LiveGovernanceEvent | nu
       value.eventId < 0 ||
       typeof value.workflowId !== 'string' ||
       typeof value.agentName !== 'string' ||
-      !isOneOf(value.workflowType, ['CUSTOMER_SUPPORT', 'CUSTOMER_REPORTING'] as const) ||
+      !isOneOf(
+        value.workflowType,
+        ['CUSTOMER_SUPPORT', 'CUSTOMER_REPORTING', 'EMAIL_COMMUNICATION'] as const,
+      ) ||
       !isTrajectoryEvent(value.event)
     ) {
       return null
