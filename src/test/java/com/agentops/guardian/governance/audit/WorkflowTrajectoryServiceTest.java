@@ -13,8 +13,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -94,6 +96,44 @@ class WorkflowTrajectoryServiceTest {
         assertEquals(404, exception.getStatusCode().value());
     }
 
+    @Test
+    void includesPersistedConversationIdInSummariesAndLeavesStandaloneWorkflowUnlinked() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        UUID conversationId = UUID.randomUUID();
+        AuditEventEntity unlinkedFirstEvent = event(
+                "workflow-in-conversation", "2026-10-01T10:00:00Z", AuditEventType.PROPOSED_ACTION,
+                null, null, null, null, null, null
+        );
+        AuditEventEntity linkedEvent = event(
+                "workflow-in-conversation", "2026-10-01T10:01:00Z", AuditEventType.EXECUTION_OUTCOME,
+                null, null, null, null, null, null, conversationId
+        );
+        AuditEventEntity standaloneEvent = event(
+                "standalone-workflow", "2026-10-01T11:00:00Z", AuditEventType.PROPOSED_ACTION,
+                null, null, null, null, null, null
+        );
+        when(repository.findAllByOrderByWorkflowIdAscTimestampAscIdAsc())
+                .thenReturn(List.of(unlinkedFirstEvent, linkedEvent, standaloneEvent));
+
+        List<WorkflowSummaryResponse> summaries = new WorkflowTrajectoryService(repository).getSummaries();
+
+        assertEquals(
+                conversationId,
+                summaries.stream()
+                        .filter(summary -> summary.workflowId().equals("workflow-in-conversation"))
+                        .findFirst()
+                        .orElseThrow()
+                        .conversationId()
+        );
+        assertNull(
+                summaries.stream()
+                        .filter(summary -> summary.workflowId().equals("standalone-workflow"))
+                        .findFirst()
+                        .orElseThrow()
+                        .conversationId()
+        );
+    }
+
     private AuditEventEntity event(
             String workflowId,
             String timestamp,
@@ -104,6 +144,24 @@ class WorkflowTrajectoryServiceTest {
             WorkflowState stateAfter,
             DataClassification classificationBefore,
             DataClassification classificationAfter
+    ) {
+        return event(
+                workflowId, timestamp, eventType, nodeBefore, nodeAfter, stateBefore, stateAfter,
+                classificationBefore, classificationAfter, null
+        );
+    }
+
+    private AuditEventEntity event(
+            String workflowId,
+            String timestamp,
+            AuditEventType eventType,
+            WorkflowNodeSnapshot nodeBefore,
+            WorkflowNodeSnapshot nodeAfter,
+            WorkflowState stateBefore,
+            WorkflowState stateAfter,
+            DataClassification classificationBefore,
+            DataClassification classificationAfter,
+            UUID conversationId
     ) {
         AuditEvent event = new AuditEvent(
                 workflowId,
@@ -129,6 +187,8 @@ class WorkflowTrajectoryServiceTest {
                 classificationAfter,
                 classificationAfter == null ? null : "ANALYTICAL"
         );
-        return AuditEventEntity.from(event);
+        return AuditEventEntity.from(
+                conversationId == null ? event : event.withConversationId(conversationId)
+        );
     }
 }

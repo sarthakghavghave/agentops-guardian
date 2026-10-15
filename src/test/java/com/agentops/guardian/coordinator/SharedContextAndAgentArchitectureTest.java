@@ -91,7 +91,7 @@ class SharedContextAndAgentArchitectureTest {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.REPORT_REQUEST, null, null
         ));
-        doReturn("Generated Boston Q3 Report").when(reportAgent).generateReport(anyString());
+        doReturn("Generated Boston Q3 Report").when(reportAgent).generateReport(anyString(), any(UUID.class));
         verifiedGeneratedReport("Verified Boston report data");
 
         AgentCoordinatorResponse response = coordinator.handle(
@@ -101,7 +101,7 @@ class SharedContextAndAgentArchitectureTest {
         assertEquals(AgentCoordinator.IntentAction.REPORT_REQUEST, response.action());
         assertEquals("Analytical customer report PDF saved to data/reports/test-report.pdf.", response.response());
         verify(reportAgent).execute(any(), any());
-        verify(reportAgent).generateReport(anyString());
+        verify(reportAgent).generateReport(anyString(), any(UUID.class));
         verifyNoInteractions(emailAgent);
     }
 
@@ -132,7 +132,7 @@ class SharedContextAndAgentArchitectureTest {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.REPORT_REQUEST, null, null
         ));
-        doReturn("Verified report content").when(reportAgent).generateReport(anyString());
+        doReturn("Verified report content").when(reportAgent).generateReport(anyString(), any(UUID.class));
         verifiedGeneratedReport("Verified report content");
 
         AgentCoordinatorResponse response = coordinator.handle(
@@ -162,7 +162,7 @@ class SharedContextAndAgentArchitectureTest {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.REPORT_REQUEST, null, null
         ));
-        doReturn("Q3 Sales: $200k").when(reportAgent).generateReport(anyString());
+        doReturn("Q3 Sales: $200k").when(reportAgent).generateReport(anyString(), any(UUID.class));
         verifiedGeneratedReport("Q3 Sales: $200k");
 
         AgentCoordinatorResponse reportResponse = coordinator.handle(
@@ -285,7 +285,8 @@ class SharedContextAndAgentArchitectureTest {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.REPORT_REQUEST, null, null
         ));
-        doThrow(new GovernanceViolationException("Blocked by data governance policy")).when(reportAgent).generateReport(anyString());
+        doThrow(new GovernanceViolationException("Blocked by data governance policy"))
+                .when(reportAgent).generateReport(anyString(), any(UUID.class));
 
         UUID conversationId = memory.open(null);
         assertThrows(GovernanceViolationException.class, () -> coordinator.handle(

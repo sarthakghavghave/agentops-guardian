@@ -17,6 +17,7 @@ export type WorkflowCapability =
 
 export type WorkflowSummaryResponse = {
   workflowId: string
+  conversationId: string | null
   agentName: string
   workflowType: WorkflowType
   startedAt: string

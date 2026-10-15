@@ -86,7 +86,7 @@ public class CustomerReportAgent {
         reportTools.beginExecution();
         try {
             CustomerReportAgent target = executionTarget != null ? executionTarget : this;
-            String response = target.generateReport(prompt);
+            String response = target.generateReport(prompt, conversationId);
             if (response == null || response.isBlank()) {
                 throw new IllegalStateException("Customer report agent returned no result.");
             }
@@ -155,11 +155,24 @@ public class CustomerReportAgent {
     }
 
     public String generateReport(String message) {
-        workflowContextManager.start(
-                "CustomerReportAgent",
-                WorkflowType.CUSTOMER_REPORTING,
-                message
-        );
+        return generateReport(message, null);
+    }
+
+    public String generateReport(String message, UUID conversationId) {
+        if (conversationId == null) {
+            workflowContextManager.start(
+                    "CustomerReportAgent",
+                    WorkflowType.CUSTOMER_REPORTING,
+                    message
+            );
+        } else {
+            workflowContextManager.start(
+                    "CustomerReportAgent",
+                    WorkflowType.CUSTOMER_REPORTING,
+                    message,
+                    conversationId
+            );
+        }
 
         try {
             String response = chatClient

@@ -48,6 +48,7 @@ public class WorkflowTrajectoryService {
         WorkflowSummaryResponse summary = summarize(events);
         return new WorkflowTrajectoryResponse(
                 summary.workflowId(),
+                summary.conversationId(),
                 summary.agentName(),
                 summary.workflowType(),
                 summary.startedAt(),
@@ -64,6 +65,11 @@ public class WorkflowTrajectoryService {
         AuditEventEntity lastEvent = events.getLast();
         return new WorkflowSummaryResponse(
                 firstEvent.getWorkflowId(),
+                events.stream()
+                        .map(AuditEventEntity::getConversationId)
+                        .filter(conversationId -> conversationId != null)
+                        .findFirst()
+                        .orElse(null),
                 firstEvent.getAgentName(),
                 firstEvent.getWorkflowType(),
                 firstEvent.getTimestamp(),

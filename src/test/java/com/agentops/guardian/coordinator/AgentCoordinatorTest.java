@@ -111,7 +111,7 @@ class AgentCoordinatorTest {
     @Test
     void reportCreationRequestStillRunsCustomerReportAgent() {
         Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
-        when(fixture.reportAgent.generateReport(anyString())).thenReturn("Model report output");
+        when(fixture.reportAgent.generateReport(anyString(), any(UUID.class))).thenReturn("Model report output");
         fixture.verifiedGeneratedReport("Verified report output");
 
         AgentCoordinatorResponse response = fixture.coordinator.handle(
@@ -168,7 +168,7 @@ class AgentCoordinatorTest {
     @Test
     void reportArtifactCanBeHandedToEmailAgentInSameConversation() throws IOException {
         Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
-        when(fixture.reportAgent.generateReport(anyString())).thenReturn("Report summary");
+        when(fixture.reportAgent.generateReport(anyString(), any(UUID.class))).thenReturn("Report summary");
         fixture.verifiedGeneratedReport("Report data from tool");
         AgentCoordinatorResponse reportResponse = fixture.coordinator.handle(
                 new AgentCoordinatorRequest("Generate sales report", null, null)
@@ -386,7 +386,8 @@ class AgentCoordinatorTest {
     @Test
     void failedReportExecutionDoesNotRegisterArtifact() {
         Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_REQUEST));
-        when(fixture.reportAgent.generateReport(anyString())).thenThrow(new IllegalStateException("Report failed."));
+        when(fixture.reportAgent.generateReport(anyString(), any(UUID.class)))
+                .thenThrow(new IllegalStateException("Report failed."));
         UUID conversationId = fixture.memory.open(null);
 
         assertThrows(IllegalStateException.class, () -> fixture.coordinator.handle(

@@ -97,6 +97,7 @@ class ApprovalResumeIntegrationTest {
                         && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
                         && pending.interventionId().equals(event.interventionId())
                         && pending.toolCallId().equals(event.toolCallId())
+                        && conversationId.equals(event.conversationId())
         ));
         assertEquals(3, fixture.policyEvaluationCount);
     }

@@ -137,6 +137,12 @@ class CustomerReportAgentTest {
 
         agent.execute(conversationId, new AgentCoordinatorRequest("Generate the report", null, null));
 
+        verify(manager).start(
+                eq("CustomerReportAgent"),
+                eq(WorkflowType.CUSTOMER_REPORTING),
+                anyString(),
+                eq(conversationId)
+        );
         Artifact report = memory.getLatestArtifact(conversationId, ArtifactType.REPORT).orElseThrow();
         assertEquals("data/reports/generated.pdf", report.content());
         assertEquals(Artifact.GENERATED_PROVENANCE, report.metadata().get(Artifact.PROVENANCE_KEY));

@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -39,6 +40,7 @@ class WorkflowTrajectoryControllerTest {
         mockMvc.perform(get("/api/workflows"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].workflowId").value("workflow-1"))
+                .andExpect(jsonPath("$[0].conversationId").value("00000000-0000-0000-0000-000000000001"))
                 .andExpect(jsonPath("$[0].eventCount").value(1));
     }
 
@@ -79,7 +81,7 @@ class WorkflowTrajectoryControllerTest {
         );
         when(trajectoryService.getTrajectory("workflow-1")).thenReturn(
                 new WorkflowTrajectoryResponse(
-                        summary.workflowId(), summary.agentName(), summary.workflowType(),
+                        summary.workflowId(), summary.conversationId(), summary.agentName(), summary.workflowType(),
                         summary.startedAt(), summary.lastEventAt(), summary.currentNodeId(),
                         summary.currentState(), summary.eventCount(), List.of(event)
                 )
@@ -88,6 +90,7 @@ class WorkflowTrajectoryControllerTest {
         mockMvc.perform(get("/api/workflows/workflow-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workflowId").value("workflow-1"))
+                .andExpect(jsonPath("$.conversationId").value("00000000-0000-0000-0000-000000000001"))
                 .andExpect(jsonPath("$.events[0].classificationBefore").value("RAW_CUSTOMER_DATA"))
                 .andExpect(jsonPath("$.events[0].classificationAfter").value("ANALYTICAL"))
                 .andExpect(jsonPath("$.events[0].transformationType").value("ANALYTICAL"));
@@ -97,6 +100,7 @@ class WorkflowTrajectoryControllerTest {
         Instant at = Instant.parse("2026-10-01T10:00:00Z");
         return new WorkflowSummaryResponse(
                 "workflow-1",
+                UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "ReportAgent",
                 WorkflowType.CUSTOMER_REPORTING,
                 at,

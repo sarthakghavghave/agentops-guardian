@@ -4,9 +4,11 @@ import com.agentops.guardian.governance.context.WorkflowState;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record WorkflowSummaryResponse(
         String workflowId,
+        UUID conversationId,
         String agentName,
         WorkflowType workflowType,
         Instant startedAt,
