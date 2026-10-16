@@ -7,6 +7,8 @@ import { LoadingState } from '../../components/feedback/LoadingState'
 import { Panel } from '../../components/ui/Panel'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useWorkflowTrajectories } from '../../hooks/useWorkflows'
+import { eventsForWorkflow, mergePersistedAndLiveEvents } from '../../hooks/liveGovernanceState'
+import type { LiveGovernanceEvent } from '../../types/liveGovernanceEvent'
 import type { WorkflowSummaryResponse } from '../../types/workflow'
 import {
   getWorkflowGovernanceSummary,
@@ -27,20 +29,36 @@ function formatTimestamp(timestamp: string): string {
 function WorkflowHistoryCard({
   workflow,
   trajectoryQuery,
+  liveEvents,
+  step,
+  stepCount,
 }: {
   workflow: WorkflowSummaryResponse
   trajectoryQuery: ReturnType<typeof useWorkflowTrajectories>[number]
+  liveEvents: LiveGovernanceEvent[]
+  step: number
+  stepCount: number
 }) {
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null)
   const trajectory = trajectoryQuery.data
-  const groups = groupTrajectoryEvents(trajectory?.events ?? [])
-  const governanceSummary = trajectory ? getWorkflowGovernanceSummary(trajectory) : null
+  const events = mergePersistedAndLiveEvents(trajectory?.events ?? [], liveEvents)
+  const groups = groupTrajectoryEvents(events)
+  const eventSummary = trajectory ?? workflow
+  const governanceSummary = events.length > 0
+    ? getWorkflowGovernanceSummary({ ...eventSummary, events })
+    : trajectory
+      ? getWorkflowGovernanceSummary(trajectory)
+      : null
   const workflowId = workflow.workflowId
+  const hasActivity = trajectory !== undefined || liveEvents.length > 0
 
   return (
     <article className="overflow-hidden rounded-md border border-line bg-white">
       <header className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-accent">
+            Workflow {step} of {stepCount} in this conversation
+          </p>
           <h3 className="text-sm font-semibold text-ink-950">
             {workflow.agentName} · {workflowTypeLabel(workflow.workflowType)}
           </h3>
@@ -57,21 +75,23 @@ function WorkflowHistoryCard({
         </Link>
       </header>
 
-      {trajectoryQuery.isPending && !trajectory && (
+      {trajectoryQuery.isPending && !trajectory && liveEvents.length === 0 && (
         <div className="px-4 py-5">
           <LoadingState label="Loading persisted governance trail..." />
         </div>
       )}
-      {trajectoryQuery.isError && !trajectory && (
+      {trajectoryQuery.isError && !trajectory && liveEvents.length === 0 && (
         <div className="p-4">
           <ErrorState message={`The persisted trajectory for workflow ${workflowId} could not be loaded.`} />
         </div>
       )}
-      {trajectory && (
+      {hasActivity && (
         <>
           {trajectoryQuery.isError && (
             <div className="p-4 pb-0">
-              <ErrorState message="The latest trajectory refresh failed. Previously loaded events remain visible." />
+              <ErrorState message={trajectory
+                ? 'The latest trajectory refresh failed. Previously loaded events remain visible.'
+                : 'The persisted trajectory could not be loaded; currently received live events are shown.'} />
             </div>
           )}
           <div className="grid gap-4 border-b border-line px-4 py-4 sm:grid-cols-2">
@@ -139,6 +159,11 @@ function WorkflowHistoryCard({
               </ol>
             </div>
           )}
+          {trajectoryQuery.isFetching && (
+            <p aria-live="polite" className="border-t border-line px-4 py-2 text-[11px] text-muted">
+              Reconciling live activity with persisted trajectory…
+            </p>
+          )}
         </>
       )}
     </article>
@@ -149,12 +174,17 @@ export function ConversationHistoryPanel({
   summaries,
   summariesPending,
   summariesError,
+  liveEvents,
 }: {
   summaries: WorkflowSummaryResponse[]
   summariesPending: boolean
   summariesError: UseQueryResult<WorkflowSummaryResponse[]>['error'] | null
+  liveEvents: LiveGovernanceEvent[]
 }) {
-  const conversations = useMemo(() => groupWorkflowsByConversation(summaries), [summaries])
+  const conversations = useMemo(
+    () => groupWorkflowsByConversation(summaries, liveEvents),
+    [summaries, liveEvents],
+  )
   const [requestedConversationId, setRequestedConversationId] = useState('')
   const selectedConversation = conversations.find(
     (conversation) => conversation.conversationId === requestedConversationId,
@@ -201,22 +231,38 @@ export function ConversationHistoryPanel({
               ))}
             </select>
           </div>
-          <div className="space-y-4 p-4 sm:p-5">
+          <ol
+            aria-label={`Chronological workflows in conversation ${selectedConversation?.conversationId}`}
+            className="relative space-y-4 p-4 sm:p-5"
+          >
+            {selectedWorkflows.length > 1 && (
+              <span
+                aria-hidden="true"
+                className="absolute bottom-10 left-[27px] top-10 border-l-2 border-accent/30"
+              />
+            )}
             {selectedWorkflows.map((workflow, index) => (
-              <div className="relative" key={workflow.workflowId}>
-                {index > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute -top-4 left-5 h-4 border-l border-slate-300"
-                  />
-                )}
+              <li className="relative pl-10" key={workflow.workflowId}>
+                <span
+                  aria-label={`Workflow ${index + 1} of ${selectedWorkflows.length}`}
+                  className="absolute left-0 top-4 z-10 flex size-7 items-center justify-center rounded-full border-2 border-white bg-accent text-xs font-semibold text-white shadow-sm"
+                >
+                  {index + 1}
+                </span>
                 <WorkflowHistoryCard
+                  liveEvents={eventsForWorkflow(
+                    liveEvents,
+                    selectedConversation?.conversationId ?? '',
+                    workflow.workflowId,
+                  )}
                   trajectoryQuery={trajectoryQueries[index]}
+                  step={index + 1}
+                  stepCount={selectedWorkflows.length}
                   workflow={workflow}
                 />
-              </div>
+              </li>
             ))}
-          </div>
+          </ol>
         </>
       )}
     </Panel>

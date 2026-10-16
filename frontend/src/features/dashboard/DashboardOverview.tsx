@@ -112,6 +112,7 @@ export function DashboardOverview({ liveState }: { liveState: LiveGovernanceStat
       />
 
       <ConversationHistoryPanel
+        liveEvents={liveState.events}
         summaries={workflows.data ?? []}
         summariesError={workflows.error}
         summariesPending={workflows.isPending}

@@ -53,6 +53,45 @@ class LiveGovernanceEventPublisherTest {
     }
 
     @Test
+    void deliversLateLowerIdAndAllowsReconnectToReplayHigherIds() {
+        RecordingEmitter connected = new RecordingEmitter();
+        publisher.connect(null, connected);
+        publisher.onAuditEventCommitted(
+                new GovernanceAuditEventPersisted(payload(entity(12L, "workflow-12")))
+        );
+        publisher.onAuditEventCommitted(
+                new GovernanceAuditEventPersisted(payload(entity(11L, "workflow-11")))
+        );
+
+        assertEquals(List.of(12L, 11L), eventIds(connected));
+
+        when(repository.findAllByIdGreaterThanOrderByIdAsc(11L))
+                .thenReturn(List.of(entity(12L, "workflow-12")));
+        RecordingEmitter reconnected = new RecordingEmitter();
+        publisher.connect("11", reconnected);
+
+        assertEquals(List.of(12L), eventIds(reconnected));
+        verify(repository).findAllByIdGreaterThanOrderByIdAsc(11L);
+    }
+
+    @Test
+    void coalescesLiveEventsThatAlsoAppearInReplay() {
+        AuditEventEntity replayed = entity(21L, "workflow-21");
+        AuditEventEntity next = entity(22L, "workflow-22");
+        when(repository.findAllByIdGreaterThanOrderByIdAsc(20L)).thenAnswer(invocation -> {
+            publisher.onAuditEventCommitted(
+                    new GovernanceAuditEventPersisted(payload(replayed))
+            );
+            return List.of(replayed, next);
+        });
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        publisher.connect("20", emitter);
+
+        assertEquals(List.of(21L, 22L), eventIds(emitter));
+    }
+
+    @Test
     void deliversCommittedEventToEveryConnectedClientAndExcludesRuntimePayload() throws Exception {
         RecordingEmitter first = new RecordingEmitter();
         RecordingEmitter second = new RecordingEmitter();

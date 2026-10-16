@@ -12,6 +12,7 @@ import {
   formatGovernanceLabel,
   getGroupInterventionId,
   latestAvailable,
+  trajectoryGroupLabel,
   type GovernanceAttentionLevel,
   type WorkflowTrajectoryGroup,
 } from './workflowPresentation'
@@ -230,12 +231,6 @@ function ActionDetails({ events }: { events: WorkflowTrajectoryEvent[] }) {
   )
 }
 
-function eventActionName(event: WorkflowTrajectoryEvent): string {
-  if (event.toolName) return formatGovernanceLabel(event.toolName)
-  if (event.capability) return formatGovernanceLabel(event.capability)
-  return formatGovernanceLabel(event.eventType)
-}
-
 function ActionCard({
   group,
   expanded,
@@ -256,14 +251,7 @@ function ActionCard({
   const riskLevel = latestAvailable(events, (event) => event.riskLevel)
   const interventionId = getGroupInterventionId(group)
   const capability = latestAvailable(events, (event) => event.capability)
-  const toolName = latestAvailable(events, (event) => event.toolName)
-  const title = toolName
-    ? formatGovernanceLabel(toolName)
-    : group.kind === 'standalone'
-      ? eventActionName(latestEvent)
-      : capability
-        ? formatGovernanceLabel(capability)
-        : 'Governed action'
+  const title = trajectoryGroupLabel(group)
   const detailsId = useId()
   const hasBlock =
     policyDecision === 'BLOCK' ||

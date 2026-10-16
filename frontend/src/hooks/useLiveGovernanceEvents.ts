@@ -4,6 +4,7 @@ import { getApiUrl } from '../api/client'
 import { queryKeys } from './queryKeys'
 import { parseLiveGovernanceEvent } from '../types/liveGovernanceEvent'
 import type { LiveGovernanceEvent } from '../types/liveGovernanceEvent'
+import { appendUniqueLiveGovernanceEvent } from './liveGovernanceState'
 
 export type LiveConnectionStatus =
   | 'CONNECTING'
@@ -94,7 +95,7 @@ export function useLiveGovernanceEvents(): LiveGovernanceState {
       }
       setState((current) => ({
         ...current,
-        events: [...current.events, event].slice(-maximumEventHistory),
+        events: appendUniqueLiveGovernanceEvent(current.events, event, maximumEventHistory),
         lastEventId: event.eventId,
         error: null,
       }))

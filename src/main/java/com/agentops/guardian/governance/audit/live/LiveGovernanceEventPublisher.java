@@ -15,7 +15,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -150,18 +149,18 @@ public class LiveGovernanceEventPublisher {
 
     private final class ClientSession {
         private final SseEmitter emitter;
+        private final long initialCursor;
         private final Map<Long, GovernanceEventStreamPayload> pendingDuringReplay = new TreeMap<>();
         private boolean replaying = true;
-        private long lastDeliveredId = -1;
         private boolean closed;
 
         private ClientSession(SseEmitter emitter, long cursor) {
             this.emitter = emitter;
-            this.lastDeliveredId = cursor;
+            this.initialCursor = cursor;
         }
 
         private synchronized void offer(GovernanceEventStreamPayload payload) {
-            if (closed || payload.eventId() == null || payload.eventId() <= lastDeliveredId) {
+            if (closed || payload.eventId() == null || payload.eventId() <= initialCursor) {
                 return;
             }
             if (replaying) {
@@ -175,10 +174,10 @@ public class LiveGovernanceEventPublisher {
             if (closed) {
                 return;
             }
-            List<GovernanceEventStreamPayload> ordered = new ArrayList<>(replay);
-            ordered.sort((left, right) -> Long.compare(left.eventId(), right.eventId()));
-            ordered.forEach(this::send);
-            pendingDuringReplay.values().forEach(this::send);
+            Map<Long, GovernanceEventStreamPayload> ordered = new TreeMap<>();
+            replay.forEach(payload -> ordered.put(payload.eventId(), payload));
+            pendingDuringReplay.forEach(ordered::putIfAbsent);
+            ordered.values().forEach(this::send);
             pendingDuringReplay.clear();
             replaying = false;
         }
@@ -195,7 +194,7 @@ public class LiveGovernanceEventPublisher {
         }
 
         private synchronized void send(GovernanceEventStreamPayload payload) {
-            if (closed || payload.eventId() == null || payload.eventId() <= lastDeliveredId) {
+            if (closed || payload.eventId() == null || payload.eventId() <= initialCursor) {
                 return;
             }
             try {
@@ -203,7 +202,6 @@ public class LiveGovernanceEventPublisher {
                         .name("governance-event")
                         .id(payload.eventId().toString())
                         .data(payload, MediaType.APPLICATION_JSON));
-                lastDeliveredId = payload.eventId();
             } catch (IOException | IllegalStateException exception) {
                 closeAfterFailure(exception);
             }
