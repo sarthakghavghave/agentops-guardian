@@ -12,6 +12,7 @@ import {
   selectConversationEvents,
 } from './features/governance/governanceActivity'
 import { useGovernanceActivity } from './features/governance/useGovernanceActivity'
+import { InterventionReview } from './features/interventions/InterventionReview'
 import type { AgentCoordinatorResponse } from './types/api'
 
 const guardianUrl = import.meta.env.VITE_GUARDIAN_URL || 'http://localhost:5173'
@@ -254,6 +255,8 @@ export function App() {
           )}
           {failedMessage && <span className="sr-only">Failed message: {failedMessage.text}</span>}
         </div>
+
+        <InterventionReview conversationId={conversationId} />
 
         <form className="composer" onSubmit={handleSubmit}>
           <label className="sr-only" htmlFor="message-composer">Message the agent</label>
