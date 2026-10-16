@@ -6,6 +6,12 @@ import {
   createCoordinatorRequest,
   isUnavailableConversationError,
 } from './features/chat/chatSession'
+import { AgentCatalog } from './features/governance/AgentCatalog'
+import { GovernanceActivityPanel } from './features/governance/GovernanceActivityPanel'
+import {
+  selectConversationEvents,
+} from './features/governance/governanceActivity'
+import { useGovernanceActivity } from './features/governance/useGovernanceActivity'
 import type { AgentCoordinatorResponse } from './types/api'
 
 const guardianUrl = import.meta.env.VITE_GUARDIAN_URL || 'http://localhost:5173'
@@ -25,6 +31,7 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [failedMessageId, setFailedMessageId] = useState<number | null>(null)
+  const governanceActivity = useGovernanceActivity()
   const nextMessageId = useRef(0)
   const messageListRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -112,6 +119,11 @@ export function App() {
 
   const sessionUnavailable = isUnavailableConversationError(error)
   const failedMessage = messages.find((message) => message.id === failedMessageId)
+  const conversationEvents = selectConversationEvents(
+    governanceActivity.events,
+    conversationId,
+  )
+  const observedAgentNames = new Set(conversationEvents.map((event) => event.agentName))
 
   return (
     <main className="portal-shell">
@@ -140,6 +152,7 @@ export function App() {
         </div>
       </header>
 
+      <div className="portal-main">
       <section aria-label="Agent conversation" className="chat-workspace">
         <div className="chat-heading">
           <span className="chat-avatar"><Bot aria-hidden="true" size={18} /></span>
@@ -272,6 +285,16 @@ export function App() {
           <span className="composer-hint">Enter to send · Shift+Enter for a new line</span>
         </form>
       </section>
+
+        <aside aria-label="Governance and agent information" className="activity-sidebar">
+          <AgentCatalog observedAgentNames={observedAgentNames} />
+          <GovernanceActivityPanel
+            conversationId={conversationId}
+            events={conversationEvents}
+            status={governanceActivity.status}
+          />
+        </aside>
+      </div>
 
       <footer className="footer">
         <span>AgentOps Guardian</span>
