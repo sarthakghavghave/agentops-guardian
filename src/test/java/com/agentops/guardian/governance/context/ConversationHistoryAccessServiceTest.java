@@ -34,6 +34,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -130,6 +131,51 @@ class ConversationHistoryAccessServiceTest {
                 events.getAllValues().get(0).workflowId(),
                 events.getAllValues().get(3).workflowId()
         );
+    }
+
+    @Test
+    void auditsHistoryAgainstCallerWorkflowWithoutFinalizingIt() {
+        PolicyDefinitionRepository repository = mock(PolicyDefinitionRepository.class);
+        when(repository.findAllByEnabledTrueOrderByPriorityAscPolicyIdAsc()).thenReturn(List.of());
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        memory.recordTurn(conversationId, "Earlier request", "Earlier response.");
+        WorkflowContextManager manager = new WorkflowContextManager(
+                new WorkflowContextHolder(), new WorkflowDefinitionRegistry()
+        );
+        AuditService auditService = mock(AuditService.class);
+        ConversationHistoryAccessService service = new ConversationHistoryAccessService(
+                manager,
+                new GovernancePolicyEngine(new ConfigurablePolicyEvaluator(
+                        repository, new ToolCapabilityRegistry(), memory
+                )),
+                auditService,
+                memory,
+                true
+        );
+        WorkflowContext emailWorkflow = manager.start(
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Send an email using conversation history.",
+                conversationId
+        );
+
+        ConversationHistoryAccessService.HistoryAccessResult access =
+                service.readHistory(conversationId, emailWorkflow);
+
+        assertTrue(access.allowed());
+        assertEquals(2, access.messages().size());
+        assertSame(emailWorkflow, manager.current());
+        assertEquals(com.agentops.guardian.governance.context.WorkflowStatus.RUNNING, emailWorkflow.getStatus());
+        ArgumentCaptor<AuditEvent> events = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditService, org.mockito.Mockito.times(3)).record(events.capture());
+        assertTrue(events.getAllValues().stream().allMatch(event ->
+                emailWorkflow.getWorkflowId().equals(event.workflowId())
+                        && conversationId.equals(event.conversationId())
+        ));
+        assertEquals(GovernanceDecision.DecisionType.ALLOW, events.getAllValues().get(1).policyDecision());
+        assertEquals(AuditEvent.ExecutionStatus.SUCCESS, events.getAllValues().get(2).executionStatus());
+        manager.clear();
     }
 
     @Test

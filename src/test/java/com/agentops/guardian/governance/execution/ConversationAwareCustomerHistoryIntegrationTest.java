@@ -5,6 +5,8 @@ import com.agentops.guardian.coordinator.ConversationMemory;
 import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.governance.audit.AuditEvent;
+import com.agentops.guardian.governance.audit.AuditEventEntity;
+import com.agentops.guardian.governance.audit.AuditEventRepository;
 import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.audit.AuditService;
 import com.agentops.guardian.governance.config.GovernanceSettings;
@@ -34,6 +36,7 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.service.CustomerService;
+import com.agentops.guardian.service.WorkflowTrajectoryService;
 import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.CustomerTools;
 import io.micrometer.observation.ObservationRegistry;
@@ -48,6 +51,8 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.support.ToolCallbacks;
+import org.springframework.beans.BeanUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -227,6 +232,123 @@ class ConversationAwareCustomerHistoryIntegrationTest {
         assertEquals(List.of("michael.fletcher@example.test"), evidence.customerEmails());
     }
 
+    @Test
+    void emailHistoryReadAndSendShareOnePersistedWorkflowTrajectory() throws Exception {
+        Fixture fixture = new Fixture();
+        UUID conversationId = fixture.memory.open(null);
+        fixture.memory.recordTurn(conversationId, "Earlier request", "Earlier response.");
+        when(fixture.decisionClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
+                .thenReturn(new EmailAgent.EmailDecision(
+                        EmailAgent.EmailDecisionOutcome.SEND,
+                        null,
+                        "operator@example.test",
+                        "Follow-up",
+                        "Please see the requested update.",
+                        false,
+                        null
+                ));
+        when(fixture.communicationTools.executionResults()).thenReturn(List.of(
+                new CommunicationTools.EmailResult(
+                        "confirmed-email-1",
+                        "operator@example.test",
+                        true,
+                        java.time.LocalDateTime.now()
+                )
+        ));
+        when(fixture.sendClient.prompt().user(anyString()).call().content()).thenAnswer(invocation -> {
+            WorkflowContext workflow = fixture.workflowContextManager.current();
+            fixture.auditService.record(AuditEvent.proposedAction(
+                    workflow.getWorkflowId(),
+                    workflow.getAgentName(),
+                    workflow.getWorkflowType(),
+                    "send-email-call",
+                    "sendEmail",
+                    WorkflowCapability.SEND_EMAIL,
+                    null
+            ).withConversationId(conversationId));
+            fixture.auditService.record(AuditEvent.executionOutcome(
+                    workflow.getWorkflowId(),
+                    workflow.getAgentName(),
+                    workflow.getWorkflowType(),
+                    "send-email-call",
+                    "sendEmail",
+                    WorkflowCapability.SEND_EMAIL,
+                    AuditEvent.ExecutionStatus.SUCCESS,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            ).withConversationId(conversationId));
+            return "Tool call completed.";
+        });
+
+        var result = fixture.emailAgent.execute(
+                conversationId,
+                new AgentCoordinatorRequest("Send the requested update.", "operator@example.test", null)
+        );
+
+        assertTrue(result.isSuccess());
+        ArgumentCaptor<AuditEvent> eventCaptor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(fixture.auditService, org.mockito.Mockito.times(5)).record(eventCaptor.capture());
+        List<AuditEvent> recordedEvents = eventCaptor.getAllValues();
+        String workflowId = recordedEvents.getFirst().workflowId();
+        assertTrue(recordedEvents.stream().allMatch(event ->
+                workflowId.equals(event.workflowId())
+                        && conversationId.equals(event.conversationId())
+        ));
+
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        when(repository.findByWorkflowIdOrderByTimestampAscIdAsc(workflowId))
+                .thenReturn(recordedEvents.stream()
+                        .map(ConversationAwareCustomerHistoryIntegrationTest::entity)
+                        .toList());
+        var trajectory = new WorkflowTrajectoryService(repository).getTrajectory(workflowId);
+
+        assertEquals(5, trajectory.events().size());
+        assertEquals(
+                List.of(
+                        AuditEventType.PROPOSED_ACTION,
+                        AuditEventType.POLICY_DECISION,
+                        AuditEventType.EXECUTION_OUTCOME,
+                        AuditEventType.PROPOSED_ACTION,
+                        AuditEventType.EXECUTION_OUTCOME
+                ),
+                trajectory.events().stream().map(event -> event.eventType()).toList()
+        );
+        assertEquals("readConversationHistory", trajectory.events().getFirst().toolName());
+        assertEquals(WorkflowCapability.READ_CONVERSATION_HISTORY,
+                trajectory.events().getFirst().capability());
+        assertEquals(GovernanceDecision.DecisionType.ALLOW,
+                trajectory.events().get(1).policyDecision());
+        assertEquals(AuditEvent.ExecutionStatus.SUCCESS,
+                trajectory.events().get(2).executionStatus());
+        assertEquals("sendEmail", trajectory.events().get(3).toolName());
+        assertEquals(AuditEvent.ExecutionStatus.SUCCESS,
+                trajectory.events().getLast().executionStatus());
+        assertEquals(conversationId, trajectory.conversationId());
+    }
+
+    private static AuditEventEntity entity(AuditEvent event) {
+        AuditEventEntity entity = BeanUtils.instantiateClass(AuditEventEntity.class);
+        ReflectionTestUtils.setField(entity, "workflowId", event.workflowId());
+        ReflectionTestUtils.setField(entity, "conversationId", event.conversationId());
+        ReflectionTestUtils.setField(entity, "agentName", event.agentName());
+        ReflectionTestUtils.setField(entity, "workflowType", event.workflowType());
+        ReflectionTestUtils.setField(entity, "timestamp", event.timestamp());
+        ReflectionTestUtils.setField(entity, "eventType", event.eventType());
+        ReflectionTestUtils.setField(entity, "toolCallId", event.toolCallId());
+        ReflectionTestUtils.setField(entity, "toolName", event.toolName());
+        ReflectionTestUtils.setField(entity, "capability", event.capability());
+        ReflectionTestUtils.setField(entity, "sequence", event.sequence());
+        ReflectionTestUtils.setField(entity, "policyDecision", event.policyDecision());
+        ReflectionTestUtils.setField(entity, "policyId", event.policyId());
+        ReflectionTestUtils.setField(entity, "policyReason", event.policyReason());
+        ReflectionTestUtils.setField(entity, "executionStatus", event.executionStatus());
+        return entity;
+    }
+
     private static final class Fixture {
         private final ConversationMemory memory = spy(new ConversationMemory());
         private final WorkflowContextManager workflowContextManager = new WorkflowContextManager(
@@ -248,6 +370,7 @@ class ConversationAwareCustomerHistoryIntegrationTest {
         private final CommunicationTools communicationTools = mock(CommunicationTools.class);
         private final EmailAgent emailAgent;
         private ChatClient decisionClient;
+        private ChatClient sendClient;
 
         private Fixture() throws Exception {
             settings.setEnabled(true);
@@ -338,7 +461,7 @@ class ConversationAwareCustomerHistoryIntegrationTest {
             when(builder.defaultSystem(anyString())).thenReturn(builder);
             when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
             decisionClient = mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS);
-            ChatClient sendClient = mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS);
+            sendClient = mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS);
             when(builder.build()).thenReturn(decisionClient, sendClient);
             when(decisionClient.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
                     .thenReturn(new EmailAgent.EmailDecision(
