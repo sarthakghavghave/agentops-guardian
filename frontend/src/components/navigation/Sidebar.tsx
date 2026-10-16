@@ -8,6 +8,8 @@ const navigation = [
   { label: 'Policies', to: '/policies', icon: Activity },
 ]
 
+const agentPortalUrl = import.meta.env.VITE_AGENT_PORTAL_URL || 'http://localhost:5174'
+
 export function Sidebar() {
   return (
     <aside className="flex w-full shrink-0 flex-col border-b border-white/10 bg-ink-950 text-slate-300 md:min-h-screen md:w-64 md:border-b-0 md:border-r md:border-white/10">
@@ -43,6 +45,15 @@ export function Sidebar() {
             {label}
           </NavLink>
         ))}
+        <a
+          className="flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-sm text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
+          href={agentPortalUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <ArrowUpRight aria-hidden="true" size={17} strokeWidth={1.8} />
+          Agent Portal
+        </a>
       </nav>
 
       <div className="mt-auto hidden border-t border-white/10 p-4 md:block">
