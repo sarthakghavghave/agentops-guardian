@@ -31,6 +31,7 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CommunicationTools;
+import com.agentops.guardian.tool.GmailSmtpEmailAdapter;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -51,7 +52,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ApprovalResumeIntegrationTest {
@@ -77,12 +81,19 @@ class ApprovalResumeIntegrationTest {
 
         assertEquals(GovernanceInterventionStatus.APPROVED, response.status());
         assertEquals("COMPLETED", response.taskStatus());
-        assertTrue(response.taskMessage().contains("simulated email request"));
+        assertTrue(response.taskMessage().contains("Gmail SMTP accepted"));
         verify(fixture.tools, org.mockito.Mockito.times(1)).sendEmail(
                 "operator@example.test",
                 "Meeting invitation",
                 "Please join our meeting tomorrow."
         );
+        verify(fixture.emailAdapter).send(
+                "operator@example.test",
+                "Meeting invitation",
+                "Please join our meeting tomorrow.",
+                null
+        );
+        verifyNoInteractions(fixture.decisionClient, fixture.toolClient);
         verify(fixture.interventionService).createPending(
                 any(WorkflowContext.class),
                 anyString(),
@@ -123,7 +134,31 @@ class ApprovalResumeIntegrationTest {
 
         assertEquals("BLOCKED", response.taskStatus());
         verify(fixture.tools, org.mockito.Mockito.never()).sendEmail(anyString(), anyString(), anyString());
+        verify(fixture.emailAdapter, never()).send(anyString(), anyString(), anyString(), any());
         assertEquals(2, fixture.policyEvaluationCount);
+    }
+
+    @Test
+    void rejectedEmailInterventionNeverInvokesMailAdapter() throws Exception {
+        String arguments = """
+                {"recipient":"operator@example.test","subject":"Meeting invitation","body":"Please join our meeting tomorrow."}
+                """;
+        ResumeFixture fixture = new ResumeFixture(false);
+        GovernanceIntervention pending = fixture.interceptApproval(arguments);
+        fixture.registerPendingTask(pending, arguments);
+        GovernanceIntervention rejected = pending.reject("reviewer", "Rejected.", Instant.now());
+        when(fixture.interventionService.reject(pending.interventionId(), "reviewer", "Rejected."))
+                .thenReturn(rejected);
+
+        GovernanceInterventionResponse response = fixture.controller().reject(
+                pending.interventionId(),
+                new InterventionResolutionRequest("reviewer", "Rejected.")
+        );
+
+        assertEquals(GovernanceInterventionStatus.REJECTED, response.status());
+        assertEquals("TERMINATED", response.taskStatus());
+        verify(fixture.emailAdapter, never()).send(anyString(), anyString(), anyString(), any());
+        verify(fixture.tools, never()).sendEmail(anyString(), anyString(), anyString());
     }
 
     private static final class ResumeFixture {
@@ -137,7 +172,10 @@ class ApprovalResumeIntegrationTest {
         private final AuditService auditService = mock(AuditService.class);
         private final GovernancePolicyEngine policyEngine = mock(GovernancePolicyEngine.class);
         private final ApprovedActionGrant grant = new ApprovedActionGrant();
-        private final CommunicationTools tools = spy(new CommunicationTools());
+        private final GmailSmtpEmailAdapter emailAdapter = mock(GmailSmtpEmailAdapter.class);
+        private final CommunicationTools tools = spy(new CommunicationTools(emailAdapter));
+        private final ChatClient decisionClient = mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS);
+        private final ChatClient toolClient = mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS);
         private final PendingAgentTaskRegistry pendingTasks = new PendingAgentTaskRegistry();
         private final GuardianToolCallingManager guardianManager;
         private int policyEvaluationCount;
@@ -146,6 +184,8 @@ class ApprovalResumeIntegrationTest {
         private ResumeFixture(boolean blockHistory) throws Exception {
             this.conversationId = memory.open(null);
             this.blockHistory = blockHistory;
+            doReturn("accepted-by-provider").when(emailAdapter)
+                    .send(anyString(), anyString(), anyString(), any());
             when(policyEngine.evaluate(any(), any())).thenAnswer(invocation -> {
                 ToolCallEvent event = invocation.getArgument(1);
                 policyEvaluationCount++;
@@ -211,10 +251,7 @@ class ApprovalResumeIntegrationTest {
             ChatClient.Builder emailBuilder = mock(ChatClient.Builder.class);
             when(emailBuilder.defaultSystem(anyString())).thenReturn(emailBuilder);
             when(emailBuilder.defaultTools(any(Object[].class))).thenReturn(emailBuilder);
-            when(emailBuilder.build()).thenReturn(
-                    mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS),
-                    mock(ChatClient.class, org.mockito.Answers.RETURNS_DEEP_STUBS)
-            );
+            when(emailBuilder.build()).thenReturn(decisionClient, toolClient);
             EmailAgent emailAgent = new EmailAgent(
                     emailBuilder,
                     tools,

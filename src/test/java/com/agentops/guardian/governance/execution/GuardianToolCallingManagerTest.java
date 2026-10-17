@@ -11,6 +11,7 @@ import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
 import com.agentops.guardian.governance.intervention.InterventionService;
 import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskAssessment;
 import com.agentops.guardian.governance.risk.RiskEvaluator;
 import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.model.GovernanceDecision;
@@ -25,6 +26,7 @@ import com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry;
 import com.agentops.guardian.governance.workflow.WorkflowGraph;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.CustomerDataTools;
+import com.agentops.guardian.tool.CommunicationTools;
 import com.agentops.guardian.tool.ReportTools;
 import com.agentops.guardian.tool.ReportFileStorageService;
 import com.agentops.guardian.tool.ToolDataStore;
@@ -565,6 +567,43 @@ class GuardianToolCallingManagerTest {
     }
 
     @Test
+    void failedEmailToolResponseIsAuditedAsFailureNotSuccess() {
+        useEmailWorkflowContext();
+        when(toolCapabilityRegistry.getCapability("sendEmail"))
+                .thenReturn(WorkflowCapability.SEND_EMAIL);
+        when(delegate.executeToolCalls(any(), any()))
+                .thenReturn(toolResult("email-failed", "sendEmail", "SMTP submission failed."));
+
+        GuardianToolCallingManager testGuardian = new GuardianToolCallingManager(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                new RiskEvaluator() {
+                    @Override
+                    public RiskAssessment assess(WorkflowContext context, WorkflowCapability capability) {
+                        return new RiskAssessment(RiskLevel.LOW, List.of(), "No intervention required for test.");
+                    }
+                },
+                interventionService
+        );
+        testGuardian.executeToolCalls(prompt, chatResponse("email-failed", "sendEmail"));
+
+        verify(auditService).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && "email-failed".equals(event.toolCallId())
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.FAILED
+                        && "EMAIL_NOT_ACCEPTED".equals(event.errorType())
+        ));
+        verify(auditService, never()).record(argThat(event ->
+                event.eventType() == AuditEventType.EXECUTION_OUTCOME
+                        && "email-failed".equals(event.toolCallId())
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
+        ));
+    }
+
+    @Test
     void approvedContinuationReevaluatesPolicyAndRiskBeforeMatchingExecution() {
         useEmailWorkflowContext();
         markAnalyticalReportHandoff();
@@ -766,11 +805,20 @@ class GuardianToolCallingManagerTest {
     }
 
     private ToolExecutionResult successfulResult(String toolCallId, String toolName) {
+        String responseData = CommunicationTools.TOOL_NAME.equals(toolName)
+                ? """
+                        {"messageId":"provider-accepted-message","recipient":"operator@example.test","accepted":true}
+                        """
+                : "executed";
+        return toolResult(toolCallId, toolName, responseData);
+    }
+
+    private ToolExecutionResult toolResult(String toolCallId, String toolName, String responseData) {
         ToolResponseMessage responseMessage = ToolResponseMessage.builder()
                 .responses(List.of(new ToolResponseMessage.ToolResponse(
                         toolCallId,
                         toolName,
-                        "executed"
+                        responseData
                 )))
                 .build();
         return ToolExecutionResult.builder()

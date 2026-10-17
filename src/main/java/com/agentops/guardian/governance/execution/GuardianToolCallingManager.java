@@ -24,6 +24,10 @@ import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.tool.CustomerDataTools;
 import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.context.VerifiedCustomerReadEvidence;
+import com.agentops.guardian.tool.CommunicationTools;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -51,6 +55,7 @@ import java.util.UUID;
 @Component
 public class GuardianToolCallingManager implements ToolCallingManager {
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final ToolCallingManager delegate;
     private final GovernancePolicyEngine policyEngine;
     private final WorkflowContextManager workflowContextManager;
@@ -483,8 +488,9 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                             proposedToolCall
                     );
 
-                    if (!executed && invocationOutcome != null
-                            && invocationOutcome.status() == ToolInvocationOutcome.Status.FAILED) {
+                    if (!executed && (invocationOutcome != null
+                            && invocationOutcome.status() == ToolInvocationOutcome.Status.FAILED
+                            || CommunicationTools.TOOL_NAME.equals(proposedToolCall.toolCall().name()))) {
                         WorkflowNodeSnapshot failedBefore = capability == null ? null : new WorkflowNodeSnapshot(
                                 workflowContext.getCurrentNodeId(),
                                 workflowContext.getCurrentState(),
@@ -498,8 +504,12 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                                 proposedToolCall.toolCall().name(),
                                 capability,
                                 AuditEvent.ExecutionStatus.FAILED,
-                                invocationOutcome.failureType(),
-                                "Tool callback failed before producing a typed customer-data result.",
+                                invocationOutcome == null
+                                        ? "EMAIL_NOT_ACCEPTED"
+                                        : invocationOutcome.failureType(),
+                                invocationOutcome == null
+                                        ? "Email tool did not return a valid provider-accepted result."
+                                        : "Tool callback failed before producing a typed customer-data result.",
                                 failedBefore,
                                 null,
                                 failedBefore == null ? null : failedBefore.state(),
@@ -799,13 +809,33 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                         : blankProviderIdFallback;
                 if (matches) {
                     matchedResponses[index] = true;
-                    successfulIds.add(proposedToolCall.guardianToolCallId());
+                    if (!CommunicationTools.TOOL_NAME.equals(proposedToolCall.toolCall().name())
+                            || isAcceptedEmailResponse(response.responseData())) {
+                        successfulIds.add(proposedToolCall.guardianToolCallId());
+                    }
                     break;
                 }
             }
         }
 
         return successfulIds;
+    }
+
+    private boolean isAcceptedEmailResponse(String responseData) {
+        if (responseData == null || responseData.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode response = OBJECT_MAPPER.readTree(responseData);
+            JsonNode messageId = response == null ? null : response.get("messageId");
+            JsonNode recipient = response == null ? null : response.get("recipient");
+            return response != null
+                    && response.path("accepted").asBoolean(false)
+                    && messageId != null && messageId.isTextual() && !messageId.asText().isBlank()
+                    && recipient != null && recipient.isTextual() && !recipient.asText().isBlank();
+        } catch (JsonProcessingException exception) {
+            return false;
+        }
     }
 
     private List<ProposedToolCall> proposedToolCalls(List<AssistantMessage.ToolCall> toolCalls) {

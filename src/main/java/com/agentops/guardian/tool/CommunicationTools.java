@@ -6,13 +6,19 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 @Component
 public class CommunicationTools {
 
+    public static final String TOOL_NAME = "sendEmail";
+
+    private final GmailSmtpEmailAdapter emailAdapter;
     private final ThreadLocal<List<EmailResult>> executionResults = new ThreadLocal<>();
     private final ThreadLocal<EmailAttachment> executionAttachment = new ThreadLocal<>();
+
+    public CommunicationTools(GmailSmtpEmailAdapter emailAdapter) {
+        this.emailAdapter = emailAdapter;
+    }
 
     @Tool(description = """
             Sends an email message to a specified recipient.
@@ -20,8 +26,8 @@ public class CommunicationTools {
             Use this capability for legitimate business communication.
 
             Provide the intended recipient, subject, and complete message body.
-            Do not claim that an email was sent unless this tool confirms
-            successful execution.
+            Do not claim that an email was accepted unless this tool confirms
+            successful submission to the email provider.
             """)
     public EmailResult sendEmail(
             String recipient,
@@ -30,31 +36,8 @@ public class CommunicationTools {
 
         validate(recipient, subject, body);
 
-        String messageId = UUID.randomUUID().toString();
-
         EmailAttachment attachment = executionAttachment.get();
-        String attachmentSummary = attachment == null
-                ? ""
-                : "\nAttachment  : %s (%s, %d bytes)".formatted(
-                        attachment.fileName(), attachment.contentType(), attachment.content().length);
-
-        System.out.println("""
-                
-                ================= OUTBOUND EMAIL =================
-                Message ID : %s
-                Recipient  : %s
-                Subject    : %s
-                %s
-                
-                %s
-                ====================================================
-                """.formatted(
-                messageId,
-                recipient,
-                subject,
-                attachmentSummary,
-                body
-        ));
+        String messageId = emailAdapter.send(recipient, subject, body, attachment);
 
         EmailResult result = new EmailResult(
                 messageId,

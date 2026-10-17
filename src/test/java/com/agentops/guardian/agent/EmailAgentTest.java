@@ -11,6 +11,7 @@ import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.exception.ApprovalRequiredException;
+import com.agentops.guardian.governance.execution.GuardianToolCallingManager;
 import com.agentops.guardian.governance.risk.RiskDecision;
 import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.risk.GovernanceIntervention;
@@ -48,7 +49,7 @@ class EmailAgentTest {
     Path tempDirectory;
 
     @Test
-    void resumedEmailAgentPathInvokesTheSimulatedSendTool() throws IOException {
+    void emailAgentPathInvokesTheMailAdapterThroughTheCommunicationTool() throws IOException {
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.defaultSystem(anyString())).thenReturn(builder);
         when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
@@ -61,7 +62,7 @@ class EmailAgentTest {
                         "Meeting invitation",
                         "Please join our meeting tomorrow."
                 ));
-        CommunicationTools tools = spy(new CommunicationTools());
+        CommunicationTools tools = newCommunicationTools();
         when(toolClient.prompt().user(anyString()).call().content()).thenAnswer(invocation -> {
             tools.sendEmail(
                     "operator@example.test",
@@ -78,7 +79,7 @@ class EmailAgentTest {
         );
 
         assertTrue(result.isSuccess());
-        assertTrue(result.response().contains("simulated email request"));
+        assertTrue(result.response().contains("Gmail SMTP accepted"));
         verify(tools).sendEmail(
                 "operator@example.test",
                 "Meeting invitation",
@@ -149,7 +150,7 @@ class EmailAgentTest {
         );
 
         assertTrue(result.isSuccess());
-        assertTrue(result.response().contains("simulated email request"));
+        assertTrue(result.response().contains("Gmail SMTP accepted"));
         ArgumentCaptor<List<Message>> messages = ArgumentCaptor.forClass(List.class);
         verify(chatClient.prompt()).messages(messages.capture());
         assertTrue(messages.getValue().stream().anyMatch(message ->
@@ -398,6 +399,7 @@ class EmailAgentTest {
                 conversationId,
                 Artifact.generatedPdfReport("Monthly report", stored.reference(), stored.sizeBytes(), 42)
         );
+        ConversationHistoryAccessService accessService = mock(ConversationHistoryAccessService.class);
         when(client.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
                 .thenReturn(new EmailAgent.EmailDecision(
                         EmailAgent.EmailDecisionOutcome.SEND,
@@ -409,8 +411,14 @@ class EmailAgentTest {
                         report.id()
                 ));
         EmailAgent agent = new EmailAgent(
-                builder, tools, mock(WorkflowContextManager.class), memory, storageService
-        );
+                        builder,
+                        tools,
+                        mock(WorkflowContextManager.class),
+                        memory,
+                        storageService,
+                        accessService,
+                        null
+                );
         ReportArtifactHandoff handoff = handoff(report);
         clearInvocations(client.prompt());
 
@@ -428,10 +436,11 @@ class EmailAgentTest {
                 message.getText().contains("Monthly report")));
         assertTrue(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains(report.id())));
-        assertTrue(decisionInput.getValue().stream().anyMatch(message ->
+        assertFalse(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains("The quarterly analysis was completed.")));
-        assertTrue(decisionInput.getValue().stream().anyMatch(message ->
+        assertFalse(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains("The report artifact is ready for email handoff.")));
+        verify(accessService, never()).readHistory(conversationId);
         ArgumentCaptor<String> toolPrompt = ArgumentCaptor.forClass(String.class);
         verify(client.prompt()).user(toolPrompt.capture());
         assertTrue(toolPrompt.getValue().contains(storedFileName));
@@ -444,6 +453,131 @@ class EmailAgentTest {
         assertEquals("application/pdf", attachment.getValue().contentType());
         assertArrayEquals(pdfBytes, attachment.getValue().content());
         verify(tools).clearAttachmentForExecution();
+    }
+
+    @Test
+    void explicitConversationMetadataRequestStillUsesGovernedHistoryAndBlocksWhenDenied() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient client = mockClient("Must not decide or send.");
+        clearInvocations(client);
+        when(builder.build()).thenReturn(client);
+        CommunicationTools tools = mock(CommunicationTools.class);
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        Artifact report = memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Quarterly report", "reports/q1.pdf", 1234, 12)
+        );
+        ConversationHistoryAccessService accessService = mock(ConversationHistoryAccessService.class);
+        when(accessService.readHistory(conversationId)).thenReturn(
+                new ConversationHistoryAccessService.HistoryAccessResult(
+                        new GovernanceDecision(
+                                GovernanceDecision.DecisionType.BLOCK,
+                                "EmailAgent cannot access conversation metadata.",
+                                "BLOCK_EMAIL_HISTORY_AFTER_CUSTOMER_READ"
+                        ),
+                        List.of()
+                )
+        );
+        EmailAgent agent = new EmailAgent(
+                builder,
+                tools,
+                mock(WorkflowContextManager.class),
+                memory,
+                null,
+                accessService,
+                null
+        );
+
+        GovernanceViolationException exception = assertThrows(
+                GovernanceViolationException.class,
+                () -> agent.execute(
+                        conversationId,
+                        new AgentCoordinatorRequest(
+                                "Email the report and include conversation metadata from the prior conversation.",
+                                "operator@example.test",
+                                null
+                        ),
+                        handoff(report)
+                )
+        );
+
+        assertEquals("EmailAgent cannot access conversation metadata.", exception.getMessage());
+        verify(accessService).readHistory(conversationId);
+        verifyNoInteractions(tools);
+        verify(client, never()).prompt();
+    }
+
+    @Test
+    void approvedReportAttachmentResumptionDoesNotRereadConversationHistory() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.defaultSystem(anyString())).thenReturn(builder);
+        when(builder.defaultTools(any(Object[].class))).thenReturn(builder);
+        ChatClient decisionClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        ChatClient toolClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        when(builder.build()).thenReturn(decisionClient, toolClient);
+        CommunicationTools tools = newCommunicationTools();
+        ConversationMemory memory = new ConversationMemory();
+        UUID conversationId = memory.open(null);
+        ReportFileStorageService storageService = new ReportFileStorageService(tempDirectory.toString());
+        ReportFileStorageService.StoredReport stored = storageService.storePdf(validPdf());
+        Artifact report = memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Quarterly report", stored.reference(), stored.sizeBytes(), 12)
+        );
+        ConversationHistoryAccessService accessService = mock(ConversationHistoryAccessService.class);
+        when(accessService.readHistory(conversationId)).thenReturn(
+                new ConversationHistoryAccessService.HistoryAccessResult(
+                        new GovernanceDecision(
+                                GovernanceDecision.DecisionType.BLOCK,
+                                "EmailAgent cannot access conversation history.",
+                                "BLOCK_EMAIL_HISTORY_AFTER_CUSTOMER_READ"
+                        ),
+                        List.of()
+                )
+        );
+        GuardianToolCallingManager guardianManager = mock(GuardianToolCallingManager.class);
+        when(tools.executionResults()).thenReturn(List.of(new CommunicationTools.EmailResult(
+                "accepted-by-provider",
+                "operator@example.test",
+                true,
+                java.time.LocalDateTime.now(),
+                Path.of(stored.reference()).getFileName().toString()
+        )));
+        EmailAgent agent = new EmailAgent(
+                builder,
+                tools,
+                mock(WorkflowContextManager.class),
+                memory,
+                storageService,
+                accessService,
+                guardianManager
+        );
+        String approvedArguments = """
+                {"recipient":"operator@example.test","subject":"Quarterly report","body":"Please see the attached report."}
+                """;
+
+        AgentResult result = agent.resumeApprovedAction(
+                conversationId,
+                "approved-intervention",
+                "approved-tool-call",
+                "sendEmail",
+                approvedArguments,
+                handoff(report)
+        );
+
+        assertTrue(result.isSuccess());
+        verify(accessService, never()).readHistory(conversationId);
+        verify(guardianManager).executeApprovedToolCall(
+                eq("approved-intervention"),
+                eq("approved-tool-call"),
+                eq("sendEmail"),
+                eq(approvedArguments),
+                any()
+        );
+        verifyNoInteractions(decisionClient, toolClient);
     }
 
     @Test
@@ -588,7 +722,7 @@ class EmailAgentTest {
 
         assertTrue(result.isSuccess());
         assertEquals(ExecutionStatus.SUCCESS, memory.getLatestExecution(conversationId).orElseThrow().status());
-        assertTrue(result.response().contains("simulated email request"));
+        assertTrue(result.response().contains("Gmail SMTP accepted"));
     }
 
     @Test
@@ -645,7 +779,7 @@ class EmailAgentTest {
         ));
 
         assertTrue(result.contains("message-123"));
-        assertTrue(result.contains("simulated email request"));
+        assertTrue(result.contains("Gmail SMTP accepted"));
         ArgumentCaptor<Object[]> toolCaptor = ArgumentCaptor.forClass(Object[].class);
         verify(builder).defaultTools(toolCaptor.capture());
         assertArrayEquals(new Object[]{tools}, toolCaptor.getValue());
@@ -777,7 +911,7 @@ class EmailAgentTest {
 
     @Test
     void communicationToolRecordsOnlySuccessfulExecutionsInTheCurrentThread() {
-        CommunicationTools tools = new CommunicationTools();
+        CommunicationTools tools = newCommunicationTools();
         tools.beginExecution();
 
         CommunicationTools.EmailResult result = tools.sendEmail(
@@ -816,6 +950,14 @@ class EmailAgentTest {
         when(client.prompt().messages(anyList()).call().entity(EmailAgent.EmailDecision.class))
                 .thenReturn(sendDecision("operator@example.test", "Subject", "Complete body"));
         return new EmailAgent(builder, tools, mock(WorkflowContextManager.class), memory);
+    }
+
+    private CommunicationTools newCommunicationTools() {
+        com.agentops.guardian.tool.GmailSmtpEmailAdapter adapter =
+                mock(com.agentops.guardian.tool.GmailSmtpEmailAdapter.class);
+        when(adapter.send(anyString(), anyString(), anyString(), any()))
+                .thenReturn("provider-accepted-message");
+        return spy(new CommunicationTools(adapter));
     }
 
     private EmailAgent.EmailDecision sendDecision(String recipient, String subject, String body) {

@@ -175,7 +175,7 @@ class AgentCoordinatorTest {
         );
 
         fixture.decision(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
-        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+        doReturn(AgentResult.success("Email provider accepted the submission."))
                 .when(fixture.emailAgent).execute(any(), any());
         AgentCoordinatorResponse emailResponse = fixture.coordinator.handle(new AgentCoordinatorRequest(
                 "Please email that report to finance@example.com",
@@ -208,7 +208,7 @@ class AgentCoordinatorTest {
                 null,
                 report.id()
         ));
-        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+        doReturn(AgentResult.success("Email provider accepted the submission."))
                 .when(fixture.emailAgent).execute(any(), any(), any());
 
         AgentCoordinatorResponse response = fixture.coordinator.handle(new AgentCoordinatorRequest(
@@ -253,7 +253,7 @@ class AgentCoordinatorTest {
     @Test
     void routesEmailToEmailAgentWithoutCoordinatorEmailIntentClassification() {
         Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
-        doReturn(AgentResult.success("Communication tool accepted the simulated email request."))
+        doReturn(AgentResult.success("Email provider accepted the submission."))
                 .when(fixture.emailAgent).execute(any(), any());
 
         AgentCoordinatorResponse response = fixture.coordinator.handle(
@@ -328,7 +328,7 @@ class AgentCoordinatorTest {
         AgentCoordinatorRequest request = new AgentCoordinatorRequest("Send an invitation", "team@example.com", null);
 
         Fixture success = new Fixture(action(AgentCoordinator.IntentAction.EMAIL_REQUEST));
-        doReturn(AgentResult.success("Accepted by simulated communication tool."))
+        doReturn(AgentResult.success("Email provider accepted the submission."))
                 .when(success.emailAgent).execute(any(), any());
         assertFalse(success.coordinator.handle(request).clarificationRequired());
 

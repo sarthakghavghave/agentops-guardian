@@ -36,11 +36,18 @@ import java.util.regex.Pattern;
 @Service
 public class EmailAgent {
 
+    private static final Pattern CONVERSATION_HISTORY_REQUEST = Pattern.compile(
+            "(?i)\\b(?:conversation|chat)\\s+(?:history|transcript|metadata)\\b"
+                    + "|\\b(?:history|transcript|metadata)\\s+(?:from|of)\\s+(?:the\\s+)?(?:conversation|chat)\\b"
+                    + "|\\b(?:previous|prior|earlier|past)\\s+(?:conversation|chat|messages?)\\b"
+                    + "|\\bwhat\\s+(?:did\\s+we|was)\\s+(?:discuss|say|talk\\s+about)\\b"
+    );
     private static final String TOOL_SYSTEM_PROMPT = """
             Execute only the approved email request provided by EmailAgent.
             Call CommunicationTools.sendEmail exactly once with the exact recipient,
             subject, and body supplied. Do not add or change content. Never bypass
-            governance. Tool acceptance is simulated and does not mean real delivery.
+            governance. Describe success only as acceptance by the configured email provider;
+            do not claim confirmed inbox delivery.
             """;
     private static final Pattern EMAIL_ADDRESS_PATTERN =
             Pattern.compile("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", Pattern.CASE_INSENSITIVE);
@@ -175,12 +182,14 @@ public class EmailAgent {
                 ? workflowContextManager.start(
                         "EmailAgent",
                         WorkflowType.EMAIL_COMMUNICATION,
-                        "Process the email request using governed conversation history.",
+                        "Process the email request using explicitly supplied context and governed history access.",
                         conversationId
                 )
                 : null;
         try {
-            EmailDecision decision = decide(conversationId, request, reportArtifacts, emailWorkflow);
+            EmailDecision decision = decide(
+                    conversationId, request, reportArtifacts, reportHandoff, emailWorkflow
+            );
             if (decision == null || decision.outcome() == null) {
                 throw new IllegalStateException("Email agent returned no valid decision.");
             }
@@ -201,6 +210,11 @@ public class EmailAgent {
             }
             return result;
         } catch (ApprovalRequiredException exception) {
+            throw exception;
+        } catch (GovernanceViolationException exception) {
+            if (emailWorkflow != null && emailWorkflow.getStatus() == WorkflowStatus.RUNNING) {
+                emailWorkflow.block();
+            }
             throw exception;
         } catch (RuntimeException exception) {
             if (emailWorkflow != null) {
@@ -275,7 +289,7 @@ public class EmailAgent {
                         ExecutionRecord.success(
                                 "EmailAgent",
                                 "SEND_EMAIL",
-                                "Communication tool accepted the simulated email request",
+                                "Email provider accepted the email submission",
                                 report == null ? null : report.reference()
                         )
                 );
@@ -296,18 +310,24 @@ public class EmailAgent {
             UUID conversationId,
             AgentCoordinatorRequest request,
             List<Artifact> reportArtifacts,
+            ReportArtifactHandoff reportHandoff,
             WorkflowContext emailWorkflow
     ) {
         List<Message> messages = new ArrayList<>();
-        boolean historyAllowed = true;
-        if (sharedContextService != null && conversationId != null && historyAccessService != null) {
+        boolean explicitlyRequestsHistory = explicitlyRequestsConversationHistory(request);
+        boolean historyAllowed = reportHandoff == null || explicitlyRequestsHistory;
+        if (historyAllowed && sharedContextService != null && conversationId != null
+                && historyAccessService != null) {
             ConversationHistoryAccessService.HistoryAccessResult access =
                     emailWorkflow == null
                             ? historyAccessService.readHistory(conversationId)
                             : historyAccessService.readHistory(conversationId, emailWorkflow);
             historyAllowed = access.allowed();
+            if (!historyAllowed && explicitlyRequestsHistory) {
+                throw new GovernanceViolationException(access.decision().reason());
+            }
             messages.addAll(access.messages());
-        } else if (sharedContextService != null && conversationId != null) {
+        } else if (historyAllowed && sharedContextService != null && conversationId != null) {
             messages.addAll(sharedContextService.history(conversationId));
         }
         messages.add(new UserMessage(buildDecisionInput(request, reportArtifacts, historyAllowed)));
@@ -315,6 +335,16 @@ public class EmailAgent {
                 .messages(messages)
                 .call()
                 .entity(EmailDecision.class);
+    }
+
+    private boolean explicitlyRequestsConversationHistory(AgentCoordinatorRequest request) {
+        return matchesConversationHistoryRequest(request.message())
+                || matchesConversationHistoryRequest(request.subjectInstructions())
+                || matchesConversationHistoryRequest(request.bodyInstructions());
+    }
+
+    private boolean matchesConversationHistoryRequest(String value) {
+        return value != null && CONVERSATION_HISTORY_REQUEST.matcher(value).find();
     }
 
     public String process(EmailRequest request) {
@@ -368,7 +398,7 @@ public class EmailAgent {
                     || (request.attachment() == null && confirmation.attachmentFileName() != null)) {
                 throw new IllegalStateException("Communication tool did not confirm successful execution.");
             }
-            response = "Communication tool accepted the simulated email request. Message ID: "
+            response = "Gmail SMTP accepted the submission. Reference: "
                     + confirmation.messageId();
             workflowContextManager.complete();
             return response;
@@ -403,7 +433,7 @@ public class EmailAgent {
         }
 
         try {
-            if (historyAccessService != null && conversationId != null) {
+            if (reportHandoff == null && historyAccessService != null && conversationId != null) {
                 ConversationHistoryAccessService.HistoryAccessResult history =
                         historyAccessService.readHistory(conversationId);
                 if (!history.allowed()) {
@@ -437,7 +467,7 @@ public class EmailAgent {
                     );
                 }
                 workflowContextManager.complete();
-                String result = "Communication tool accepted the simulated email request. Message ID: "
+                String result = "Gmail SMTP accepted the submission. Reference: "
                         + confirmations.getFirst().messageId();
                 if (sharedContextService != null && conversationId != null) {
                     sharedContextService.recordExecution(
@@ -445,7 +475,7 @@ public class EmailAgent {
                             ExecutionRecord.success(
                                     "EmailAgent",
                                     "SEND_EMAIL",
-                                    "Communication tool accepted the simulated email request",
+                                    "Email provider accepted the email submission",
                                     reportHandoff == null ? null : reportHandoff.artifactId()
                             )
                     );
@@ -562,7 +592,7 @@ public class EmailAgent {
 
                 When selecting a report, set includeReport and return the exact artifact reference.
                 Do not invent report findings. When selecting SEND, return the resolved recipient,
-                subject, and complete body. Do not claim delivery; sending is simulated.
+                subject, and complete body. Do not claim confirmed inbox delivery.
                 """);
         return input.toString();
     }

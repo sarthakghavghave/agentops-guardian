@@ -112,17 +112,20 @@ class SharedContextAndAgentArchitectureTest {
                 AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null
         ));
         mockEmailDecision(sendDecision("team@example.com", "Meeting invitation", "Please join our meeting."));
-        doReturn("Communication tool accepted the simulated email request. Message ID: msg-1")
-                .when(emailAgent).process(any(), any());
+        when(callResponseSpec.content()).thenReturn("Tool call completed.");
+        when(communicationTools.executionResults()).thenReturn(List.of(
+                new CommunicationTools.EmailResult("msg-1", "team@example.com", true, LocalDateTime.now())
+        ));
 
         AgentCoordinatorResponse response = coordinator.handle(
                 new AgentCoordinatorRequest("Send meeting invitation", "team@example.com", null)
         );
 
         assertEquals(AgentCoordinator.IntentAction.EMAIL_REQUEST, response.action());
-        assertTrue(response.response().contains("Message ID: msg-1"));
+        assertTrue(response.response().contains("Reference: msg-1"));
         verify(emailAgent).execute(any(), any());
-        verify(emailAgent).process(any(), any());
+        verify(communicationTools).beginExecution();
+        verify(communicationTools).clearExecutionResult();
         verifyNoInteractions(reportAgent);
     }
 
@@ -176,7 +179,7 @@ class SharedContextAndAgentArchitectureTest {
         mockIntentDecision(new AgentCoordinator.IntentDecision(
                 AgentCoordinator.IntentAction.EMAIL_REQUEST, null, null, null, report.id()
         ));
-        doReturn(AgentResult.success("Simulated email accepted. Message ID: msg-2"))
+        doReturn(AgentResult.success("Email provider accepted. Reference: msg-2"))
                 .when(emailAgent).execute(any(), any(), any());
 
         AgentCoordinatorResponse emailResponse = coordinator.handle(
