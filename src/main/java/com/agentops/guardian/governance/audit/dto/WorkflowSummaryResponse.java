@@ -15,6 +15,8 @@ public record WorkflowSummaryResponse(
         Instant lastEventAt,
         String currentNodeId,
         WorkflowState currentState,
-        long eventCount
+        long eventCount,
+        long allowedActionCount,
+        long blockedActionCount
 ) {
 }

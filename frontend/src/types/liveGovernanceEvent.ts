@@ -14,6 +14,7 @@ import type { WorkflowCapability, WorkflowState, WorkflowType } from './workflow
 
 export type LiveGovernanceEvent = {
   eventId: number
+  conversationId: string | null
   workflowId: string
   agentName: string
   workflowType: WorkflowType
@@ -52,6 +53,7 @@ const interventionStatuses: readonly GovernanceInterventionStatus[] = [
 ]
 const riskLevels: readonly RiskLevel[] = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL']
 const workflowCapabilities: readonly WorkflowCapability[] = [
+  'READ_CONVERSATION_HISTORY',
   'READ_CUSTOMER_DATA',
   'READ_ORDER',
   'READ_PRODUCT',
@@ -131,9 +133,13 @@ export function parseLiveGovernanceEvent(data: string): LiveGovernanceEvent | nu
       typeof value.eventId !== 'number' ||
       !Number.isInteger(value.eventId) ||
       value.eventId < 0 ||
+      !isNullableString(value.conversationId) ||
       typeof value.workflowId !== 'string' ||
       typeof value.agentName !== 'string' ||
-      !isOneOf(value.workflowType, ['CUSTOMER_SUPPORT', 'CUSTOMER_REPORTING'] as const) ||
+      !isOneOf(
+        value.workflowType,
+        ['CUSTOMER_SUPPORT', 'CUSTOMER_REPORTING', 'EMAIL_COMMUNICATION'] as const,
+      ) ||
       !isTrajectoryEvent(value.event)
     ) {
       return null
@@ -141,6 +147,7 @@ export function parseLiveGovernanceEvent(data: string): LiveGovernanceEvent | nu
 
     return {
       eventId: value.eventId,
+      conversationId: value.conversationId,
       workflowId: value.workflowId,
       agentName: value.agentName,
       workflowType: value.workflowType,

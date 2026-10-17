@@ -16,6 +16,7 @@ import org.springframework.ai.chat.messages.Message;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -83,6 +84,17 @@ public class ConversationHistoryAccessService {
     }
 
     public HistoryAccessResult readHistory(UUID conversationId) {
+        return readHistory(conversationId, null);
+    }
+
+    public HistoryAccessResult readHistory(UUID conversationId, WorkflowContext activeWorkflow) {
+        if (activeWorkflow != null
+                && (activeWorkflow.getWorkflowType() != WorkflowType.EMAIL_COMMUNICATION
+                || !Objects.equals(activeWorkflow.getConversationId(), conversationId))) {
+            throw new IllegalArgumentException(
+                    "Conversation history access must use the matching email workflow context."
+            );
+        }
         if (!governanceSettings.isEnabled()) {
             return new HistoryAccessResult(
                     new GovernanceDecision(
@@ -94,12 +106,15 @@ public class ConversationHistoryAccessService {
             );
         }
 
-        WorkflowContext workflow = workflowContextManager.start(
-                AGENT_NAME,
-                WorkflowType.EMAIL_COMMUNICATION,
-                "Evaluate EmailAgent access to shared conversation history.",
-                conversationId
-        );
+        boolean ownsWorkflow = activeWorkflow == null;
+        WorkflowContext workflow = ownsWorkflow
+                ? workflowContextManager.start(
+                        AGENT_NAME,
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        "Evaluate EmailAgent access to shared conversation history.",
+                        conversationId
+                )
+                : activeWorkflow;
         ToolCallEvent proposedCall = new ToolCallEvent(
                 UUID.randomUUID().toString(),
                 ACTION_NAME,
@@ -135,7 +150,9 @@ public class ConversationHistoryAccessService {
                 recordOutcome(workflow, proposedCall, conversationId, AuditEvent.ExecutionStatus.BLOCKED,
                         decision.reason());
                 outcomeRecorded = true;
-                workflowContextManager.block();
+                if (ownsWorkflow) {
+                    workflowContextManager.block();
+                }
                 finalized = true;
                 return new HistoryAccessResult(decision, List.of());
             }
@@ -143,7 +160,9 @@ public class ConversationHistoryAccessService {
             List<Message> messages = sharedContextService.history(conversationId);
             recordOutcome(workflow, proposedCall, conversationId, AuditEvent.ExecutionStatus.SUCCESS, null);
             outcomeRecorded = true;
-            workflowContextManager.complete();
+            if (ownsWorkflow) {
+                workflowContextManager.complete();
+            }
             finalized = true;
             return new HistoryAccessResult(decision, messages);
         } catch (RuntimeException exception) {
@@ -156,11 +175,15 @@ public class ConversationHistoryAccessService {
                         exception.addSuppressed(auditFailure);
                     }
                 }
-                workflowContextManager.fail();
+                if (ownsWorkflow) {
+                    workflowContextManager.fail();
+                }
             }
             throw exception;
         } finally {
-            workflowContextManager.clear();
+            if (ownsWorkflow) {
+                workflowContextManager.clear();
+            }
         }
     }
 

@@ -10,6 +10,7 @@ import {
   getWorkflowGovernanceSummary,
   groupTrajectoryEvents,
 } from './workflowPresentation'
+import { workflowTypeLabel } from './conversationHistory'
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)
@@ -59,9 +60,7 @@ function OtherWorkflowRow({ workflow }: { workflow: WorkflowSummaryResponse }) {
             {workflow.agentName}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted">
-            {workflow.workflowType === 'CUSTOMER_REPORTING'
-              ? 'Customer Reporting'
-              : 'Customer Support'}
+            {workflowTypeLabel(workflow.workflowType)}
             {' · '}
             {workflow.workflowId}
           </span>

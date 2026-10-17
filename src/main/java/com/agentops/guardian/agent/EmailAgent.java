@@ -8,8 +8,10 @@ import com.agentops.guardian.coordinator.context.ExecutionRecord;
 import com.agentops.guardian.coordinator.context.SharedContextService;
 import com.agentops.guardian.coordinator.dto.AgentCoordinatorRequest;
 import com.agentops.guardian.coordinator.dto.ReportArtifactHandoff;
-import com.agentops.guardian.governance.context.WorkflowContextManager;
 import com.agentops.guardian.governance.context.ConversationHistoryAccessService;
+import com.agentops.guardian.governance.context.WorkflowContext;
+import com.agentops.guardian.governance.context.WorkflowContextManager;
+import com.agentops.guardian.governance.context.WorkflowStatus;
 import com.agentops.guardian.governance.exception.GovernanceViolationException;
 import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.execution.GuardianToolCallingManager;
@@ -169,20 +171,47 @@ public class EmailAgent {
             reportArtifacts.add(suppliedArtifact);
         }
 
-        EmailDecision decision = decide(conversationId, request, reportArtifacts);
-        if (decision == null || decision.outcome() == null) {
-            throw new IllegalStateException("Email agent returned no valid decision.");
-        }
+        WorkflowContext emailWorkflow = historyAccessService != null && conversationId != null
+                ? workflowContextManager.start(
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        "Process the email request using governed conversation history.",
+                        conversationId
+                )
+                : null;
+        try {
+            EmailDecision decision = decide(conversationId, request, reportArtifacts, emailWorkflow);
+            if (decision == null || decision.outcome() == null) {
+                throw new IllegalStateException("Email agent returned no valid decision.");
+            }
 
-        return switch (decision.outcome()) {
-            case CLARIFICATION_REQUIRED -> AgentResult.clarification(
-                    requireResponse(decision.response(), "Email agent returned no clarification.")
-            );
-            case UNSUPPORTED -> AgentResult.clarification(
-                    requireResponse(decision.response(), "Email request is not supported.")
-            );
-            case SEND -> executeSend(conversationId, request, decision, reportArtifacts, reportHandoff);
-        };
+            AgentResult result = switch (decision.outcome()) {
+                case CLARIFICATION_REQUIRED -> AgentResult.clarification(
+                        requireResponse(decision.response(), "Email agent returned no clarification.")
+                );
+                case UNSUPPORTED -> AgentResult.clarification(
+                        requireResponse(decision.response(), "Email request is not supported.")
+                );
+                case SEND -> executeSend(
+                        conversationId, request, decision, reportArtifacts, reportHandoff, emailWorkflow
+                );
+            };
+            if (emailWorkflow != null && emailWorkflow.getStatus() == WorkflowStatus.RUNNING) {
+                workflowContextManager.complete();
+            }
+            return result;
+        } catch (ApprovalRequiredException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            if (emailWorkflow != null) {
+                emailWorkflow.fail();
+            }
+            throw exception;
+        } finally {
+            if (emailWorkflow != null) {
+                workflowContextManager.clear();
+            }
+        }
     }
 
     private AgentResult executeSend(
@@ -190,7 +219,8 @@ public class EmailAgent {
             AgentCoordinatorRequest request,
             EmailDecision decision,
             List<Artifact> reportArtifacts,
-            ReportArtifactHandoff reportHandoff
+            ReportArtifactHandoff reportHandoff,
+            WorkflowContext emailWorkflow
     ) {
         String recipient = firstNonBlank(request.recipient(), decision.recipient());
         if (recipient == null) {
@@ -234,8 +264,11 @@ public class EmailAgent {
         }
 
         try {
-            String result = process(new EmailRequest(
-                    recipient, decision.subject(), decision.body(), report, attachment), conversationId);
+            String result = process(
+                    new EmailRequest(recipient, decision.subject(), decision.body(), report, attachment),
+                    conversationId,
+                    emailWorkflow
+            );
             if (sharedContextService != null && conversationId != null) {
                 sharedContextService.recordExecution(
                         conversationId,
@@ -262,13 +295,16 @@ public class EmailAgent {
     private EmailDecision decide(
             UUID conversationId,
             AgentCoordinatorRequest request,
-            List<Artifact> reportArtifacts
+            List<Artifact> reportArtifacts,
+            WorkflowContext emailWorkflow
     ) {
         List<Message> messages = new ArrayList<>();
         boolean historyAllowed = true;
         if (sharedContextService != null && conversationId != null && historyAccessService != null) {
             ConversationHistoryAccessService.HistoryAccessResult access =
-                    historyAccessService.readHistory(conversationId);
+                    emailWorkflow == null
+                            ? historyAccessService.readHistory(conversationId)
+                            : historyAccessService.readHistory(conversationId, emailWorkflow);
             historyAllowed = access.allowed();
             messages.addAll(access.messages());
         } else if (sharedContextService != null && conversationId != null) {
@@ -286,17 +322,29 @@ public class EmailAgent {
     }
 
     public String process(EmailRequest request, UUID conversationId) {
+        return process(request, conversationId, null);
+    }
+
+    private String process(
+            EmailRequest request,
+            UUID conversationId,
+            WorkflowContext emailWorkflow
+    ) {
         validate(request);
         String prompt = buildToolPrompt(request);
-        if (conversationId == null) {
-            workflowContextManager.start("EmailAgent", WorkflowType.EMAIL_COMMUNICATION, prompt);
-        } else {
-            workflowContextManager.start(
-                    "EmailAgent",
-                    WorkflowType.EMAIL_COMMUNICATION,
-                    prompt,
-                    conversationId
-            );
+        if (emailWorkflow == null) {
+            if (conversationId == null) {
+                workflowContextManager.start("EmailAgent", WorkflowType.EMAIL_COMMUNICATION, prompt);
+            } else {
+                workflowContextManager.start(
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        prompt,
+                        conversationId
+                );
+            }
+        } else if (workflowContextManager.current() != emailWorkflow) {
+            throw new IllegalStateException("The active email workflow context changed before send execution.");
         }
 
         communicationTools.beginExecution();

@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "agentops.governance")
 public class GovernanceSettings {
 
-    private boolean enabled = true;
+    private volatile boolean enabled = true;
 
     public boolean isEnabled() {
         return enabled;

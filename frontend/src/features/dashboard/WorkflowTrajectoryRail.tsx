@@ -11,6 +11,7 @@ import {
   groupTrajectoryEvents,
 } from './workflowPresentation'
 import type { WorkflowSummaryResponse } from '../../types/workflow'
+import { workflowTypeLabel } from './conversationHistory'
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)
@@ -116,9 +117,7 @@ export function WorkflowTrajectoryRail({
           <div className="flex flex-col gap-3 border-b border-line px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-ink-950">
-                {workflow.agentName} · {workflow.workflowType === 'CUSTOMER_REPORTING'
-                  ? 'Customer Reporting'
-                  : 'Customer Support'}
+                {workflow.agentName} · {workflowTypeLabel(workflow.workflowType)}
               </p>
               <p className="mt-1 truncate font-mono text-xs text-muted">{workflow.workflowId}</p>
             </div>

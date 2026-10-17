@@ -3,6 +3,9 @@ package com.agentops.guardian.governance.audit;
 import com.agentops.guardian.governance.audit.dto.WorkflowSummaryResponse;
 import com.agentops.guardian.governance.audit.dto.WorkflowTrajectoryResponse;
 import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
+import com.agentops.guardian.governance.risk.RiskDecision;
+import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.model.GovernanceDecision;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
@@ -22,6 +25,76 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class WorkflowTrajectoryServiceTest {
+
+    @Test
+    void summarizesPersistedAllowedAndAutonomouslyBlockedActionsByToolCall() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        String workflowId = "workflow-counts";
+        List<AuditEventEntity> events = List.of(
+                entity(AuditEvent.policyDecision(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-allowed", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed.", "EMAIL")
+                )),
+                entity(AuditEvent.riskAssessment(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-allowed", "sendEmail", WorkflowCapability.SEND_EMAIL, 1,
+                        new RiskDecision(RiskLevel.LOW, GovernanceIntervention.NONE, "Low risk.")
+                )),
+                entity(AuditEvent.executionOutcome(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-allowed", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        AuditEvent.ExecutionStatus.SUCCESS, null, null, null, null, null, null
+                )),
+                entity(AuditEvent.policyDecision(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-audit", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed.", "EMAIL")
+                )),
+                entity(AuditEvent.riskAssessment(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-audit", "sendEmail", WorkflowCapability.SEND_EMAIL, 2,
+                        new RiskDecision(RiskLevel.MODERATE, GovernanceIntervention.AUDIT, "Audit.")
+                )),
+                entity(AuditEvent.policyDecision(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-policy-block", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        new GovernanceDecision(GovernanceDecision.DecisionType.BLOCK, "Blocked.", "EMAIL")
+                )),
+                entity(AuditEvent.policyDecision(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-risk-block", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed by policy.", "EMAIL")
+                )),
+                entity(AuditEvent.riskAssessment(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-risk-block", "sendEmail", WorkflowCapability.SEND_EMAIL, 3,
+                        new RiskDecision(RiskLevel.CRITICAL, GovernanceIntervention.BLOCK, "Critical.")
+                )),
+                entity(AuditEvent.policyDecision(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-approval", "sendEmail", WorkflowCapability.SEND_EMAIL,
+                        new GovernanceDecision(GovernanceDecision.DecisionType.ALLOW, "Allowed by policy.", "EMAIL")
+                )),
+                entity(AuditEvent.riskAssessment(
+                        workflowId, "EmailAgent", WorkflowType.EMAIL_COMMUNICATION,
+                        "call-approval", "sendEmail", WorkflowCapability.SEND_EMAIL, 4,
+                        new RiskDecision(
+                                RiskLevel.HIGH,
+                                GovernanceIntervention.REQUIRE_APPROVAL,
+                                "Approval required."
+                        )
+                ))
+        );
+        when(repository.findAllByOrderByWorkflowIdAscTimestampAscIdAsc()).thenReturn(events);
+
+        WorkflowSummaryResponse summary = new WorkflowTrajectoryService(repository)
+                .getSummaries()
+                .getFirst();
+
+        assertEquals(2, summary.allowedActionCount());
+        assertEquals(2, summary.blockedActionCount());
+    }
 
     @Test
     void reconstructsChronologicalTrajectoryAndSummaryFallbacks() {
@@ -190,5 +263,9 @@ class WorkflowTrajectoryServiceTest {
         return AuditEventEntity.from(
                 conversationId == null ? event : event.withConversationId(conversationId)
         );
+    }
+
+    private AuditEventEntity entity(AuditEvent event) {
+        return AuditEventEntity.from(event);
     }
 }

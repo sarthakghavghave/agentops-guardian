@@ -41,7 +41,9 @@ class WorkflowTrajectoryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].workflowId").value("workflow-1"))
                 .andExpect(jsonPath("$[0].conversationId").value("00000000-0000-0000-0000-000000000001"))
-                .andExpect(jsonPath("$[0].eventCount").value(1));
+                .andExpect(jsonPath("$[0].eventCount").value(1))
+                .andExpect(jsonPath("$[0].allowedActionCount").value(4))
+                .andExpect(jsonPath("$[0].blockedActionCount").value(2));
     }
 
     @Test
@@ -107,7 +109,9 @@ class WorkflowTrajectoryControllerTest {
                 at,
                 "REPORT",
                 WorkflowState.REPORT_GENERATED,
-                1
+                1,
+                4,
+                2
         );
     }
 }

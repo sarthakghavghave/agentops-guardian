@@ -81,6 +81,18 @@ export function groupTrajectoryEvents(
     .map(({ group }) => group)
 }
 
+export function trajectoryGroupLabel(group: WorkflowTrajectoryGroup): string {
+  const events = group.kind === 'action' ? group.events : [group.event]
+  const latestEvent = events[events.length - 1]
+  const toolName = latestAvailable(events, (event) => event.toolName)
+  if (toolName) return formatGovernanceLabel(toolName)
+  if (group.kind === 'standalone') {
+    return formatGovernanceLabel(latestEvent.capability ?? latestEvent.eventType)
+  }
+  const capability = latestAvailable(events, (event) => event.capability)
+  return capability ? formatGovernanceLabel(capability) : 'Governed action'
+}
+
 export function formatGovernanceLabel(value: string): string {
   return value
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')

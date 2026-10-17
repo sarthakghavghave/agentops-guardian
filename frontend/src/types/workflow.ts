@@ -1,4 +1,4 @@
-export type WorkflowType = 'CUSTOMER_SUPPORT' | 'CUSTOMER_REPORTING'
+export type WorkflowType = 'CUSTOMER_SUPPORT' | 'CUSTOMER_REPORTING' | 'EMAIL_COMMUNICATION'
 
 export type WorkflowState =
   | 'STARTED'
@@ -8,6 +8,7 @@ export type WorkflowState =
   | 'COMPLETED'
 
 export type WorkflowCapability =
+  | 'READ_CONVERSATION_HISTORY'
   | 'READ_CUSTOMER_DATA'
   | 'READ_ORDER'
   | 'READ_PRODUCT'
@@ -25,6 +26,8 @@ export type WorkflowSummaryResponse = {
   currentNodeId: string | null
   currentState: WorkflowState | null
   eventCount: number
+  allowedActionCount?: number
+  blockedActionCount?: number
 }
 
 export type WorkflowTrajectoryResponse = WorkflowSummaryResponse & {
