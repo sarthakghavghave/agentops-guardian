@@ -38,6 +38,15 @@ export function DashboardOverview({ liveState }: { liveState: LiveGovernanceStat
     (intervention) => intervention.status === 'PENDING',
   ).length
 
+  const allowedActionCount = workflows.data?.reduce(
+    (total, workflow) => total + (workflow.allowedActionCount ?? 0),
+    0,
+  )
+  const blockedActionCount = workflows.data?.reduce(
+    (total, workflow) => total + (workflow.blockedActionCount ?? 0),
+    0,
+  )
+
   const metrics = [
     {
       label: 'Total workflows',
@@ -54,14 +63,26 @@ export function DashboardOverview({ liveState }: { liveState: LiveGovernanceStat
     {
       label: 'Allowed actions',
       icon: Check,
-      value: '—',
-      detail: 'Not available from the summary APIs',
+      value: allowedActionCount === undefined || workflows.isError
+        ? '—'
+        : String(allowedActionCount),
+      detail: workflows.isPending
+        ? 'Loading action decisions'
+        : workflows.isError
+          ? 'Action decisions unavailable'
+          : 'Allowed without approval intervention',
     },
     {
       label: 'Blocked actions',
       icon: CircleSlash,
-      value: '—',
-      detail: 'Not available from the summary APIs',
+      value: blockedActionCount === undefined || workflows.isError
+        ? '—'
+        : String(blockedActionCount),
+      detail: workflows.isPending
+        ? 'Loading action decisions'
+        : workflows.isError
+          ? 'Action decisions unavailable'
+          : 'Blocked by policy or risk controls',
     },
     {
       label: 'Pending interventions',

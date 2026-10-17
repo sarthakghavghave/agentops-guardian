@@ -273,9 +273,17 @@ export function InterventionReview({ conversationId }: InterventionReviewProps) 
           className={`resolution-result${result.intervention.status === 'APPROVED' || result.intervention.status === 'REJECTED' ? ' resolution-result-confirmed' : ' resolution-result-warning'}`}
           role="status"
         >
-          <strong>
+          <strong className="resolution-result-heading">
             {result.action === 'approve' ? 'Approval response' : 'Rejection response'}
           </strong>
+          <div className="resolution-outcome-badges">
+            <span className={`resolution-decision resolution-decision-${result.intervention.status.toLowerCase()}`}>
+              Governance · {result.intervention.status}
+            </span>
+            <span className={`resolution-task resolution-task-${(result.intervention.taskStatus || 'unknown').toLowerCase()}`}>
+              Task · {result.intervention.taskStatus || 'Outcome unavailable'}
+            </span>
+          </div>
           <p>{resolutionOutcome(result.intervention, result.action)}</p>
           {result.trajectory && (
             <p className="workflow-refresh-result">

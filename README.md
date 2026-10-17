@@ -167,6 +167,11 @@ From the project root:
 
 Then use the app endpoints or local API calls to test prompts, workflows, and intervention behavior.
 
+The Guardian dashboard's Control panel switch reads and updates the running governance setting through
+`GET` and `PUT /api/governance/settings`. The change is runtime-only and resets to `GOVERNANCE_ENABLED`
+when the backend restarts. This demo endpoint is not authenticated; keep it on a trusted local network
+and do not expose it publicly.
+
 ## Summary
 
 AgentOps Guardian is a practical governance layer for AI-powered customer workflows. It helps prevent unsafe tool actions, tracks workflow state, evaluates policy and risk, and forces approvals when needed. The project is a solid example of AI tool guardrails built around workflow context, policy checks, and traceable human intervention.

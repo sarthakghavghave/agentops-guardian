@@ -12,7 +12,7 @@ const agentPortalUrl = import.meta.env.VITE_AGENT_PORTAL_URL || 'http://localhos
 
 export function Sidebar() {
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-white/10 bg-ink-950 text-slate-300 md:min-h-screen md:w-64 md:border-b-0 md:border-r md:border-white/10">
+    <aside className="sticky top-0 z-30 flex w-full shrink-0 flex-col border-b border-white/10 bg-ink-950 text-slate-300 md:sticky md:h-screen md:min-h-0 md:w-64 md:border-b-0 md:border-r md:border-white/10">
       <div className="flex h-[68px] items-center gap-3 border-b border-white/10 px-5">
         <span className="flex h-9 w-9 items-center justify-center rounded-md bg-accent text-white">
           <Activity aria-hidden="true" size={19} strokeWidth={2.2} />
@@ -56,20 +56,6 @@ export function Sidebar() {
         </a>
       </nav>
 
-      <div className="mt-auto hidden border-t border-white/10 p-4 md:block">
-        <div className="rounded-md border border-white/10 bg-white/[0.03] p-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            Backend connection
-          </div>
-          <p className="mt-2 text-xs leading-5 text-slate-500">
-            Live data will appear as API integration is enabled.
-          </p>
-          <span className="mt-3 flex items-center gap-1 text-[11px] text-slate-400">
-            Configuration <ArrowUpRight aria-hidden="true" size={12} />
-          </span>
-        </div>
-      </div>
     </aside>
   )
 }

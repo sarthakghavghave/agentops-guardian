@@ -26,6 +26,8 @@ export type WorkflowSummaryResponse = {
   currentNodeId: string | null
   currentState: WorkflowState | null
   eventCount: number
+  allowedActionCount?: number
+  blockedActionCount?: number
 }
 
 export type WorkflowTrajectoryResponse = WorkflowSummaryResponse & {

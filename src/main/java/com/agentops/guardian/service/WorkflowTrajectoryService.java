@@ -1,17 +1,21 @@
 package com.agentops.guardian.service;
 
 import com.agentops.guardian.governance.audit.AuditEventEntity;
+import com.agentops.guardian.governance.audit.AuditEventType;
 import com.agentops.guardian.governance.audit.AuditEventRepository;
 import com.agentops.guardian.governance.audit.dto.WorkflowSummaryResponse;
 import com.agentops.guardian.governance.audit.dto.WorkflowTrajectoryEvent;
 import com.agentops.guardian.governance.audit.dto.WorkflowTrajectoryResponse;
 import com.agentops.guardian.governance.context.WorkflowState;
+import com.agentops.guardian.governance.model.GovernanceDecision;
+import com.agentops.guardian.governance.risk.GovernanceIntervention;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +67,31 @@ public class WorkflowTrajectoryService {
     private WorkflowSummaryResponse summarize(List<AuditEventEntity> events) {
         AuditEventEntity firstEvent = events.getFirst();
         AuditEventEntity lastEvent = events.getLast();
+        Map<String, ActionDecision> decisions = new HashMap<>();
+        for (AuditEventEntity event : events) {
+            if (event.getToolCallId() == null) {
+                continue;
+            }
+            ActionDecision decision = decisions.computeIfAbsent(
+                    event.getToolCallId(),
+                    ignored -> new ActionDecision()
+            );
+            if (event.getEventType() == AuditEventType.POLICY_DECISION
+                    && event.getPolicyDecision() != null) {
+                decision.policyDecision = event.getPolicyDecision();
+            }
+            if (event.getEventType() == AuditEventType.RISK_ASSESSMENT
+                    && event.getIntervention() != null) {
+                decision.intervention = event.getIntervention();
+            }
+        }
+        long blockedActionCount = decisions.values().stream()
+                .filter(ActionDecision::isBlocked)
+                .count();
+        long allowedActionCount = decisions.values().stream()
+                .filter(ActionDecision::isAllowedWithoutApproval)
+                .count();
+
         return new WorkflowSummaryResponse(
                 firstEvent.getWorkflowId(),
                 events.stream()
@@ -76,8 +105,26 @@ public class WorkflowTrajectoryService {
                 lastEvent.getTimestamp(),
                 latestNodeId(events),
                 latestState(events),
-                events.size()
+                events.size(),
+                allowedActionCount,
+                blockedActionCount
         );
+    }
+
+    private static final class ActionDecision {
+        private GovernanceDecision.DecisionType policyDecision;
+        private GovernanceIntervention intervention;
+
+        private boolean isBlocked() {
+            return policyDecision == GovernanceDecision.DecisionType.BLOCK
+                    || intervention == GovernanceIntervention.BLOCK;
+        }
+
+        private boolean isAllowedWithoutApproval() {
+            return policyDecision == GovernanceDecision.DecisionType.ALLOW
+                    && intervention != GovernanceIntervention.REQUIRE_APPROVAL
+                    && intervention != GovernanceIntervention.BLOCK;
+        }
     }
 
     private String latestNodeId(List<AuditEventEntity> events) {

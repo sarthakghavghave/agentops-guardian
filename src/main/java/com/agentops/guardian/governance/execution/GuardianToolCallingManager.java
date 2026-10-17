@@ -60,7 +60,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
     private final InterventionService interventionService;
     private final ToolInvocationCorrelation toolInvocationCorrelation;
     private final SharedContextService sharedContextService;
-    private final boolean governanceEnabled;
+    private final GovernanceSettings governanceSettings;
     private final ApprovedActionGrant approvedActionGrant;
 
     @Autowired
@@ -87,7 +87,7 @@ public class GuardianToolCallingManager implements ToolCallingManager {
                 interventionService,
                 toolInvocationCorrelation,
                 sharedContextService,
-                governanceSettings.isEnabled(),
+                governanceSettings,
                 approvedActionGrant
         );
     }
@@ -252,6 +252,33 @@ public class GuardianToolCallingManager implements ToolCallingManager {
             SharedContextService sharedContextService,
             boolean governanceEnabled,
             ApprovedActionGrant approvedActionGrant) {
+        this(
+                workflowContextManager,
+                policyEngine,
+                toolCapabilityRegistry,
+                delegate,
+                auditService,
+                riskEvaluator,
+                interventionService,
+                toolInvocationCorrelation,
+                sharedContextService,
+                settingsWithEnabled(governanceEnabled),
+                approvedActionGrant
+        );
+    }
+
+    GuardianToolCallingManager(
+            WorkflowContextManager workflowContextManager,
+            GovernancePolicyEngine policyEngine,
+            ToolCapabilityRegistry toolCapabilityRegistry,
+            ToolCallingManager delegate,
+            AuditService auditService,
+            RiskEvaluator riskEvaluator,
+            InterventionService interventionService,
+            ToolInvocationCorrelation toolInvocationCorrelation,
+            SharedContextService sharedContextService,
+            GovernanceSettings governanceSettings,
+            ApprovedActionGrant approvedActionGrant) {
         this.workflowContextManager = workflowContextManager;
         this.policyEngine = policyEngine;
         this.toolCapabilityRegistry = toolCapabilityRegistry;
@@ -261,13 +288,13 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         this.interventionService = interventionService;
         this.toolInvocationCorrelation = toolInvocationCorrelation;
         this.sharedContextService = sharedContextService;
-        this.governanceEnabled = governanceEnabled;
+        this.governanceSettings = governanceSettings;
         this.approvedActionGrant = approvedActionGrant;
     }
 
     @Override
     public ToolExecutionResult executeToolCalls(Prompt prompt, ChatResponse chatResponse) {
-        if (!governanceEnabled) {
+        if (!governanceSettings.isEnabled()) {
             return delegate.executeToolCalls(prompt, chatResponse);
         }
 
@@ -886,6 +913,12 @@ public class GuardianToolCallingManager implements ToolCallingManager {
         }
         String message = ex.getMessage();
         return message == null || message.isBlank() ? ex.getClass().getSimpleName() : message;
+    }
+
+    private static GovernanceSettings settingsWithEnabled(boolean enabled) {
+        GovernanceSettings settings = new GovernanceSettings();
+        settings.setEnabled(enabled);
+        return settings;
     }
 
     private record ProposedToolCall(

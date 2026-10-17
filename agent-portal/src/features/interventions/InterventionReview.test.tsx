@@ -174,6 +174,8 @@ describe('InterventionReview', () => {
 
     finishApproval(resolved)
     expect(await screen.findByText(/Task status: FAILED/)).toBeTruthy()
+    expect(screen.getByText('Governance · APPROVED')).toBeTruthy()
+    expect(screen.getByText('Task · FAILED')).toBeTruthy()
     expect(await screen.findByText(/Refreshed workflow: 4 persisted events/)).toBeTruthy()
     expect(mockedTrajectory).toHaveBeenCalledWith('workflow-1')
     await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2))

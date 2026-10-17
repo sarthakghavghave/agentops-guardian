@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Activity, ChevronDown, ChevronUp, Radio } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronDown, ChevronUp, Radio, X } from 'lucide-react'
 import {
+  getLatestGovernanceEvent,
   getVisibleGovernanceEvents,
   groupEventsByWorkflow,
 } from './governanceActivity'
@@ -22,8 +23,16 @@ const statusLabels: Record<GovernanceStreamStatus, string> = {
 
 export function GovernanceActivityPanel({ conversationId, events, status }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const [dismissedBlockEventId, setDismissedBlockEventId] = useState<number | null>(null)
   const visibleEvents = getVisibleGovernanceEvents(events, expanded)
   const workflows = groupEventsByWorkflow(visibleEvents)
+  const blockedEvent = getLatestGovernanceEvent(
+    events.filter(({ event }) =>
+      event.policyDecision === 'BLOCK'
+      || event.executionStatus === 'BLOCKED'
+      || event.intervention === 'BLOCK',
+    ),
+  )
   const toggleLabel = expanded ? 'Collapse governance activity' : 'Expand governance activity'
 
   return (
@@ -54,6 +63,31 @@ export function GovernanceActivityPanel({ conversationId, events, status }: Prop
           ? 'Live events associated with this conversation'
           : 'Conversation events are shown after the coordinator returns its ID'}
       </p>
+      {blockedEvent && blockedEvent.eventId !== dismissedBlockEventId && (
+        <div className="governance-block-alert" role="alert">
+          <span aria-hidden="true" className="governance-block-icon">
+            <AlertTriangle size={15} />
+          </span>
+          <div>
+            <strong>Governance blocked this action</strong>
+            <p>{blockedEvent.event.toolName || blockedEvent.event.capability || 'Governed action'}</p>
+            <p>
+              {blockedEvent.event.policyReason
+                || blockedEvent.event.riskReason
+                || blockedEvent.event.errorMessage
+                || 'The governance event records this action as blocked.'}
+            </p>
+          </div>
+          <button
+            aria-label="Dismiss governance alert"
+            className="governance-block-dismiss"
+            onClick={() => setDismissedBlockEventId(blockedEvent.eventId)}
+            type="button"
+          >
+            <X aria-hidden="true" size={14} />
+          </button>
+        </div>
+      )}
       <div
         aria-live="polite"
         className={`activity-list${expanded ? ' activity-list-expanded' : ' activity-list-collapsed'}`}
