@@ -419,6 +419,7 @@ public class EmailAgent {
 
     public AgentResult resumeApprovedAction(
             UUID conversationId,
+            String workflowId,
             String interventionId,
             String toolCallId,
             String toolName,
@@ -431,20 +432,16 @@ public class EmailAgent {
         if (!"sendEmail".equals(toolName)) {
             throw new IllegalArgumentException("Only the approved sendEmail action can use this continuation.");
         }
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("The original workflow ID is required to resume an approved action.");
+        }
 
         try {
-            if (reportHandoff == null && historyAccessService != null && conversationId != null) {
-                ConversationHistoryAccessService.HistoryAccessResult history =
-                        historyAccessService.readHistory(conversationId);
-                if (!history.allowed()) {
-                    throw new GovernanceViolationException(history.decision().reason());
-                }
-            }
-
             CommunicationTools.EmailAttachment attachment = reportHandoff == null
                     ? null
                     : loadValidatedAttachment(conversationId, reportHandoff);
-            workflowContextManager.start(
+            WorkflowContext workflow = workflowContextManager.resume(
+                    workflowId,
                     "EmailAgent",
                     WorkflowType.EMAIL_COMMUNICATION,
                     "Execute the exact approved email action.",
@@ -453,6 +450,13 @@ public class EmailAgent {
             communicationTools.beginExecution();
             communicationTools.setAttachmentForExecution(attachment);
             try {
+                if (reportHandoff == null && historyAccessService != null && conversationId != null) {
+                    ConversationHistoryAccessService.HistoryAccessResult history =
+                            historyAccessService.readHistory(conversationId, workflow);
+                    if (!history.allowed()) {
+                        throw new GovernanceViolationException(history.decision().reason());
+                    }
+                }
                 guardianToolCallingManager.executeApprovedToolCall(
                         interventionId,
                         toolCallId,

@@ -207,6 +207,73 @@ class WorkflowTrajectoryServiceTest {
         );
     }
 
+    @Test
+    void approvalAndResumedExecutionRemainOneWorkflowTrajectory() {
+        AuditEventRepository repository = mock(AuditEventRepository.class);
+        String workflowId = "workflow-approved-email";
+        UUID conversationId = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-10-18T10:00:00Z");
+        com.agentops.guardian.governance.intervention.GovernanceIntervention pending =
+                new com.agentops.guardian.governance.intervention.GovernanceIntervention(
+                        "intervention-email",
+                        workflowId,
+                        "send-call-email",
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        WorkflowCapability.SEND_EMAIL,
+                        RiskLevel.HIGH,
+                        GovernanceIntervention.REQUIRE_APPROVAL,
+                        com.agentops.guardian.governance.intervention.GovernanceInterventionStatus.PENDING,
+                        "External communication requires approval.",
+                        createdAt,
+                        null,
+                        null,
+                        null,
+                        "EMAIL",
+                        WorkflowState.STARTED,
+                        null,
+                        conversationId,
+                        "sendEmail",
+                        "arguments-digest"
+                );
+        var approved = pending.approve("reviewer", "Approved.", createdAt.plusSeconds(30));
+        List<AuditEventEntity> events = List.of(
+                entity(AuditEvent.interventionLifecycle(pending, AuditEventType.INTERVENTION_CREATED)),
+                entity(AuditEvent.interventionLifecycle(approved, AuditEventType.INTERVENTION_APPROVED)),
+                entity(AuditEvent.executionOutcome(
+                        workflowId,
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        "send-call-email",
+                        "sendEmail",
+                        WorkflowCapability.SEND_EMAIL,
+                        AuditEvent.ExecutionStatus.SUCCESS,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                ).withConversationId(conversationId))
+        );
+        when(repository.findAllByOrderByWorkflowIdAscTimestampAscIdAsc()).thenReturn(events);
+        when(repository.findByWorkflowIdOrderByTimestampAscIdAsc(workflowId)).thenReturn(events);
+        WorkflowTrajectoryService service = new WorkflowTrajectoryService(repository);
+
+        List<WorkflowSummaryResponse> summaries = service.getSummaries();
+        WorkflowTrajectoryResponse trajectory = service.getTrajectory(workflowId);
+
+        assertEquals(1, summaries.size());
+        assertEquals(workflowId, summaries.getFirst().workflowId());
+        assertEquals(3, summaries.getFirst().eventCount());
+        assertEquals(workflowId, trajectory.workflowId());
+        assertEquals(3, trajectory.eventCount());
+        assertEquals(AuditEventType.INTERVENTION_CREATED, trajectory.events().getFirst().eventType());
+        assertEquals(AuditEventType.INTERVENTION_APPROVED, trajectory.events().get(1).eventType());
+        assertEquals(AuditEventType.EXECUTION_OUTCOME, trajectory.events().getLast().eventType());
+        assertEquals(AuditEvent.ExecutionStatus.SUCCESS, trajectory.events().getLast().executionStatus());
+    }
+
     private AuditEventEntity event(
             String workflowId,
             String timestamp,

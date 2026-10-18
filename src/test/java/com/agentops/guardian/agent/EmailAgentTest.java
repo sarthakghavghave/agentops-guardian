@@ -561,6 +561,7 @@ class EmailAgentTest {
 
         AgentResult result = agent.resumeApprovedAction(
                 conversationId,
+                "workflow-approved",
                 "approved-intervention",
                 "approved-tool-call",
                 "sendEmail",

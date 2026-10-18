@@ -142,6 +142,7 @@ class ConversationAwareCustomerHistoryIntegrationTest {
                 approved,
                 () -> fixture.emailAgent.resumeApprovedAction(
                         conversationId,
+                        approved.workflowId(),
                         approved.interventionId(),
                         approved.toolCallId(),
                         approved.toolName(),

@@ -50,6 +50,29 @@ public class WorkflowContextManager {
         );
     }
 
+    public WorkflowContext resume(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            String goal,
+            UUID conversationId
+    ) {
+        if (contextHolder.getCurrentWorkflow() != null) {
+            throw new IllegalStateException("A workflow is already active on this thread.");
+        }
+
+        WorkflowDefinition definition = workflowDefinitionRegistry.get(workflowType);
+
+        return contextHolder.resumeWorkflow(
+                workflowId,
+                agentName,
+                workflowType,
+                goal,
+                definition,
+                conversationId
+        );
+    }
+
     public WorkflowContext current() {
         WorkflowContext context = contextHolder.getCurrentWorkflow();
 

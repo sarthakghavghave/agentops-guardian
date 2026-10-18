@@ -359,6 +359,7 @@ public class AgentCoordinator {
                         intervention,
                         () -> emailAgent.resumeApprovedAction(
                                 conversationId,
+                                task.sourceWorkflowId(),
                                 intervention.interventionId(),
                                 task.toolCallId(),
                                 task.toolName(),

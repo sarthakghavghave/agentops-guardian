@@ -106,9 +106,21 @@ class ApprovalResumeIntegrationTest {
                 (AuditEvent event) -> event.eventType()
                         == com.agentops.guardian.governance.audit.AuditEventType.EXECUTION_OUTCOME
                         && event.executionStatus() == AuditEvent.ExecutionStatus.SUCCESS
+                        && pending.workflowId().equals(event.workflowId())
                         && pending.interventionId().equals(event.interventionId())
                         && pending.toolCallId().equals(event.toolCallId())
                         && conversationId.equals(event.conversationId())
+        ));
+        verify(fixture.auditService).record(org.mockito.ArgumentMatchers.argThat(
+                (AuditEvent event) -> event.eventType()
+                        == com.agentops.guardian.governance.audit.AuditEventType.WORKFLOW_TRANSITION
+                        && pending.workflowId().equals(event.workflowId())
+                        && pending.interventionId().equals(event.interventionId())
+                        && pending.toolCallId().equals(event.toolCallId())
+        ));
+        verify(fixture.auditService, never()).record(org.mockito.ArgumentMatchers.argThat(
+                (AuditEvent event) -> conversationId.equals(event.conversationId())
+                        && !pending.workflowId().equals(event.workflowId())
         ));
         assertEquals(3, fixture.policyEvaluationCount);
     }
@@ -135,7 +147,55 @@ class ApprovalResumeIntegrationTest {
         assertEquals("BLOCKED", response.taskStatus());
         verify(fixture.tools, org.mockito.Mockito.never()).sendEmail(anyString(), anyString(), anyString());
         verify(fixture.emailAdapter, never()).send(anyString(), anyString(), anyString(), any());
+        verify(fixture.auditService).record(org.mockito.ArgumentMatchers.argThat(
+                (AuditEvent event) -> event.eventType()
+                        == com.agentops.guardian.governance.audit.AuditEventType.POLICY_DECISION
+                        && event.policyDecision() == com.agentops.guardian.governance.model.GovernanceDecision.DecisionType.BLOCK
+                        && event.workflowId().equals(pending.workflowId())
+                        && event.conversationId().equals(conversationId)
+        ));
         assertEquals(2, fixture.policyEvaluationCount);
+    }
+
+    @Test
+    void failedApprovedEmailRecordsFailureAgainstOriginalWorkflow() throws Exception {
+        String arguments = """
+                {"recipient":"operator@example.test","subject":"Meeting invitation","body":"Please join our meeting tomorrow."}
+                """;
+        ResumeFixture fixture = new ResumeFixture(false);
+        GovernanceIntervention pending = fixture.interceptApproval(arguments);
+        fixture.registerPendingTask(pending, arguments);
+        GovernanceIntervention approved = pending.approve("reviewer", "Approved.", Instant.now());
+        when(fixture.interventionService.approve(pending.interventionId(), "reviewer", "Approved."))
+                .thenReturn(approved);
+        org.mockito.Mockito.doThrow(new IllegalStateException("SMTP unavailable."))
+                .when(fixture.emailAdapter).send(anyString(), anyString(), anyString(), any());
+
+        GovernanceInterventionResponse response = fixture.controller().approve(
+                pending.interventionId(),
+                new InterventionResolutionRequest("reviewer", "Approved.")
+        );
+
+        assertEquals(GovernanceInterventionStatus.APPROVED, response.status());
+        assertEquals("FAILED", response.taskStatus());
+        verify(fixture.emailAdapter).send(
+                "operator@example.test",
+                "Meeting invitation",
+                "Please join our meeting tomorrow.",
+                null
+        );
+        verify(fixture.auditService, org.mockito.Mockito.atLeastOnce()).record(org.mockito.ArgumentMatchers.argThat(
+                (AuditEvent event) -> event.eventType()
+                        == com.agentops.guardian.governance.audit.AuditEventType.EXECUTION_OUTCOME
+                        && event.executionStatus() == AuditEvent.ExecutionStatus.FAILED
+                        && pending.workflowId().equals(event.workflowId())
+                        && pending.interventionId().equals(event.interventionId())
+                        && pending.toolCallId().equals(event.toolCallId())
+        ));
+        verify(fixture.auditService, never()).record(org.mockito.ArgumentMatchers.argThat(
+                (AuditEvent event) -> "send-call-integration".equals(event.toolCallId())
+                        && !pending.workflowId().equals(event.workflowId())
+        ));
     }
 
     @Test

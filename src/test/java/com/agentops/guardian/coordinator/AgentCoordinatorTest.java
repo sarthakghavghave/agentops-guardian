@@ -411,7 +411,7 @@ class AgentCoordinatorTest {
                 })
                 .thenReturn(AgentResult.success("Email completed."));
         when(fixture.emailAgent.resumeApprovedAction(
-                any(UUID.class), anyString(), anyString(), anyString(), anyString(), any()
+                any(UUID.class), anyString(), anyString(), anyString(), anyString(), anyString(), any()
         )).thenReturn(AgentResult.success("Email completed."));
 
         AgentCoordinatorResponse pending = fixture.coordinator.handle(
@@ -434,6 +434,7 @@ class AgentCoordinatorTest {
         verify(fixture.emailAgent, times(1)).execute(eq(conversationId), any(AgentCoordinatorRequest.class));
         verify(fixture.emailAgent).resumeApprovedAction(
                 eq(conversationId),
+                eq("workflow-approval-1"),
                 eq("intervention-resume-1"),
                 eq("send-call-1"),
                 eq("sendEmail"),
@@ -468,7 +469,7 @@ class AgentCoordinatorTest {
         when(fixture.emailAgent.execute(any(UUID.class), any(AgentCoordinatorRequest.class)))
                 .thenThrow(new ApprovalRequiredException(originalIntervention, arguments));
         when(fixture.emailAgent.resumeApprovedAction(
-                any(UUID.class), anyString(), anyString(), anyString(), anyString(), any()
+                any(UUID.class), anyString(), anyString(), anyString(), anyString(), anyString(), any()
         )).thenReturn(AgentResult.success("Approved action completed."));
 
         AgentCoordinatorResponse pending = fixture.coordinator.handle(
@@ -484,6 +485,7 @@ class AgentCoordinatorTest {
         assertEquals("Approved action completed.", result.message());
         verify(fixture.emailAgent).resumeApprovedAction(
                 eq(conversationId),
+                eq(originalIntervention.workflowId()),
                 eq("original-intervention"),
                 eq("send-call-1"),
                 eq("sendEmail"),
