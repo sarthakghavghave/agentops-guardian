@@ -40,6 +40,28 @@ public class WorkflowContextHolder {
         return workflowContext;
     }
 
+    public WorkflowContext startWorkflow(
+            String workflowId,
+            String agentName,
+            WorkflowType workflowType,
+            String goal,
+            WorkflowDefinition workflowDefinition,
+            UUID conversationId
+    ) {
+        WorkflowContext workflowContext = new WorkflowContext(
+                workflowId,
+                agentName,
+                workflowType,
+                goal,
+                workflowDefinition,
+                conversationId
+        );
+
+        context.set(workflowContext);
+
+        return workflowContext;
+    }
+
     public WorkflowContext resumeWorkflow(
             String workflowId,
             String agentName,

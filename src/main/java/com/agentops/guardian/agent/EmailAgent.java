@@ -151,7 +151,7 @@ public class EmailAgent {
     }
 
     public AgentResult execute(UUID conversationId, AgentCoordinatorRequest request) {
-        return execute(conversationId, request, null);
+        return execute(conversationId, request, null, null);
     }
 
     public AgentResult execute(
@@ -159,12 +159,28 @@ public class EmailAgent {
             AgentCoordinatorRequest request,
             ReportArtifactHandoff reportHandoff
     ) {
+        return execute(conversationId, request, reportHandoff, null);
+    }
+
+    public AgentResult execute(
+            UUID conversationId,
+            AgentCoordinatorRequest request,
+            ReportArtifactHandoff reportHandoff,
+            String workflowId
+    ) {
         validateRequest(request);
         validateOptionalRecipient(request.recipient());
 
         List<Artifact> reportArtifacts = new ArrayList<>();
         if (sharedContextService != null && conversationId != null) {
-            reportArtifacts.addAll(sharedContextService.getArtifacts(conversationId, ArtifactType.REPORT));
+            if (reportHandoff == null) {
+                reportArtifacts.addAll(sharedContextService.getArtifacts(conversationId, ArtifactType.REPORT));
+            } else {
+                reportArtifacts.add(sharedContextService.getArtifact(conversationId, reportHandoff.artifactId())
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "Registered report artifact was not found."
+                        )));
+            }
         }
         if (request.report() != null) {
             AgentCoordinatorRequest.ReportHandoff handoff = request.report();
@@ -178,13 +194,22 @@ public class EmailAgent {
             reportArtifacts.add(suppliedArtifact);
         }
 
-        WorkflowContext emailWorkflow = historyAccessService != null && conversationId != null
-                ? workflowContextManager.start(
-                        "EmailAgent",
-                        WorkflowType.EMAIL_COMMUNICATION,
-                        "Process the email request using explicitly supplied context and governed history access.",
-                        conversationId
-                )
+        WorkflowContext emailWorkflow = conversationId != null
+                && (historyAccessService != null || workflowId != null)
+                ? workflowId == null
+                        ? workflowContextManager.start(
+                                "EmailAgent",
+                                WorkflowType.EMAIL_COMMUNICATION,
+                                "Process the email request using explicitly supplied context and governed history access.",
+                                conversationId
+                        )
+                        : workflowContextManager.start(
+                                workflowId,
+                                "EmailAgent",
+                                WorkflowType.EMAIL_COMMUNICATION,
+                                "Process the email request using explicitly supplied context and governed history access.",
+                                conversationId
+                        )
                 : null;
         try {
             EmailDecision decision = decide(
@@ -252,27 +277,26 @@ public class EmailAgent {
 
         ReportContext report = null;
         CommunicationTools.EmailAttachment attachment = null;
-        if (decision.includeReport()) {
-            if (reportHandoff != null) {
-                if (!reportHandoff.artifactId().equals(decision.reportReference())) {
-                    return AgentResult.clarification("Please confirm which report should be attached.");
-                }
-                try {
-                    attachment = loadValidatedAttachment(conversationId, reportHandoff);
-                    report = new ReportContext(reportHandoff.artifactId(), reportHandoff.title());
-                } catch (IllegalArgumentException | java.io.UncheckedIOException ex) {
-                    return AgentResult.clarification("The selected report is no longer available as a valid PDF.");
-                }
-            } else {
-                Artifact artifact = resolveReportArtifact(decision.reportReference(), reportArtifacts);
-                if (artifact == null || Artifact.GENERATED_PROVENANCE.equals(
-                        artifact.metadata().get(Artifact.PROVENANCE_KEY))) {
-                    return AgentResult.clarification(
-                            "Which available report should I attach? Select a report in this conversation first."
-                    );
-                }
-                report = new ReportContext(artifact.id(), artifact.content());
+        if (reportHandoff != null) {
+            if (decision.reportReference() != null && !decision.reportReference().isBlank()
+                    && !reportHandoff.artifactId().equals(decision.reportReference())) {
+                return AgentResult.clarification("Please confirm which report should be attached.");
             }
+            try {
+                attachment = loadValidatedAttachment(conversationId, reportHandoff);
+                report = new ReportContext(reportHandoff.artifactId(), reportHandoff.title());
+            } catch (IllegalArgumentException | java.io.UncheckedIOException ex) {
+                return AgentResult.clarification("The selected report is no longer available as a valid PDF.");
+            }
+        } else if (decision.includeReport()) {
+            Artifact artifact = resolveReportArtifact(decision.reportReference(), reportArtifacts);
+            if (artifact == null || Artifact.GENERATED_PROVENANCE.equals(
+                    artifact.metadata().get(Artifact.PROVENANCE_KEY))) {
+                return AgentResult.clarification(
+                        "Which available report should I attach? Select a report in this conversation first."
+                );
+            }
+            report = new ReportContext(artifact.id(), artifact.content());
         } else if (decision.reportReference() != null && !decision.reportReference().isBlank()) {
             throw new IllegalStateException("Email decision references a report that it did not select.");
         }
@@ -330,7 +354,9 @@ public class EmailAgent {
         } else if (historyAllowed && sharedContextService != null && conversationId != null) {
             messages.addAll(sharedContextService.history(conversationId));
         }
-        messages.add(new UserMessage(buildDecisionInput(request, reportArtifacts, historyAllowed)));
+        messages.add(new UserMessage(buildDecisionInput(
+                request, reportArtifacts, historyAllowed, reportHandoff
+        )));
         return decisionClient.prompt()
                 .messages(messages)
                 .call()
@@ -535,7 +561,8 @@ public class EmailAgent {
     private String buildDecisionInput(
             AgentCoordinatorRequest request,
             List<Artifact> reportArtifacts,
-            boolean historyAllowed
+            boolean historyAllowed,
+            ReportArtifactHandoff reportHandoff
     ) {
         StringBuilder input = new StringBuilder("""
                 Interpret the current request using the available conversation history and registered report artifacts.
@@ -591,6 +618,11 @@ public class EmailAgent {
                     ));
                 }
             }
+        }
+        if (reportHandoff != null) {
+            input.append("\nThe current request requires attaching this generated report: ")
+                    .append(reportHandoff.artifactId())
+                    .append(". Do not select another report or omit this attachment.\n");
         }
         input.append("""
 
@@ -648,6 +680,15 @@ public class EmailAgent {
         if (sharedContextService == null || conversationId == null || reportFileStorageService == null) {
             throw new IllegalArgumentException("Registered report file services are unavailable.");
         }
+        resolveHandoffArtifact(conversationId, handoff);
+        ReportFileStorageService.LoadedPdf pdf = reportFileStorageService.loadPdf(handoff.storageReference());
+        return new CommunicationTools.EmailAttachment(pdf.fileName(), "application/pdf", pdf.content());
+    }
+
+    private Artifact resolveHandoffArtifact(UUID conversationId, ReportArtifactHandoff handoff) {
+        if (sharedContextService == null || conversationId == null || handoff == null) {
+            throw new IllegalArgumentException("Registered report context is unavailable.");
+        }
         Artifact artifact = sharedContextService.getArtifact(conversationId, handoff.artifactId())
                 .orElseThrow(() -> new IllegalArgumentException("Registered report artifact was not found."));
         if (artifact.type() != ArtifactType.REPORT
@@ -663,8 +704,7 @@ public class EmailAgent {
                 || !"PDF".equalsIgnoreCase(handoff.format())) {
             throw new IllegalArgumentException("Report handoff does not match the registered artifact.");
         }
-        ReportFileStorageService.LoadedPdf pdf = reportFileStorageService.loadPdf(handoff.storageReference());
-        return new CommunicationTools.EmailAttachment(pdf.fileName(), "application/pdf", pdf.content());
+        return artifact;
     }
 
     private Artifact resolveReportArtifact(String reference, List<Artifact> artifacts) {

@@ -69,13 +69,30 @@ public class CustomerReportAgent {
     }
 
     public AgentResult execute(UUID conversationId, AgentCoordinatorRequest request) {
-        return execute(conversationId, request, this);
+        return execute(conversationId, request, this, null);
     }
 
     public AgentResult execute(
             UUID conversationId,
             AgentCoordinatorRequest request,
             CustomerReportAgent executionTarget
+    ) {
+        return execute(conversationId, request, executionTarget, null);
+    }
+
+    public AgentResult execute(
+            UUID conversationId,
+            AgentCoordinatorRequest request,
+            String workflowId
+    ) {
+        return execute(conversationId, request, this, workflowId);
+    }
+
+    private AgentResult execute(
+            UUID conversationId,
+            AgentCoordinatorRequest request,
+            CustomerReportAgent executionTarget,
+            String workflowId
     ) {
         String message = request != null ? request.message() : null;
         if (message == null || message.isBlank()) {
@@ -86,7 +103,9 @@ public class CustomerReportAgent {
         reportTools.beginExecution();
         try {
             CustomerReportAgent target = executionTarget != null ? executionTarget : this;
-            String response = target.generateReport(prompt, conversationId);
+            String response = workflowId == null
+                    ? target.generateReport(prompt, conversationId)
+                    : target.generateReport(prompt, conversationId, workflowId);
             if (response == null || response.isBlank()) {
                 throw new IllegalStateException("Customer report agent returned no result.");
             }
@@ -159,7 +178,19 @@ public class CustomerReportAgent {
     }
 
     public String generateReport(String message, UUID conversationId) {
-        if (conversationId == null) {
+        return generateReport(message, conversationId, null);
+    }
+
+    public String generateReport(String message, UUID conversationId, String workflowId) {
+        if (workflowId != null) {
+            workflowContextManager.start(
+                    workflowId,
+                    "CustomerReportAgent",
+                    WorkflowType.CUSTOMER_REPORTING,
+                    message,
+                    conversationId
+            );
+        } else if (conversationId == null) {
             workflowContextManager.start(
                     "CustomerReportAgent",
                     WorkflowType.CUSTOMER_REPORTING,

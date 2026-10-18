@@ -178,6 +178,10 @@ public class InterventionService {
     private boolean isStale(GovernanceIntervention intervention) {
         List<AuditEventEntity> events = auditEventRepository
                 .findByWorkflowIdOrderByTimestampAscIdAsc(intervention.workflowId());
+        events = events.stream()
+                .filter(event -> intervention.agentName().equals(event.getAgentName()))
+                .filter(event -> intervention.workflowType() == event.getWorkflowType())
+                .toList();
         if (events.isEmpty()) {
             return true;
         }

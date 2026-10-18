@@ -70,6 +70,30 @@ class CustomerReportAgentTest {
     }
 
     @Test
+    void startsReportWorkflowWithCoordinatorProvidedIdentity() throws IOException {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        mockChatClient(builder, "Report generated.");
+        WorkflowContextManager manager = mock(WorkflowContextManager.class);
+        CustomerReportAgent agent = new CustomerReportAgent(
+                builder, mock(CustomerDataTools.class), mock(ReportTools.class), manager
+        );
+        UUID conversationId = UUID.randomUUID();
+        String workflowId = UUID.randomUUID().toString();
+
+        agent.generateReport("Generate report.", conversationId, workflowId);
+
+        verify(manager).start(
+                workflowId,
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING,
+                "Generate report.",
+                conversationId
+        );
+        verify(manager).complete();
+        verify(manager).clear();
+    }
+
+    @Test
     void governanceViolationBlocksAndClearsWorkflow() throws IOException {
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         mockChatClientFailure(builder, new GovernanceViolationException("Blocked by governance."));

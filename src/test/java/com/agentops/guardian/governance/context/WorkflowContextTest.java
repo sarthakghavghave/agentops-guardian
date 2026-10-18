@@ -75,6 +75,41 @@ class WorkflowContextTest {
     }
 
     @Test
+    void explicitlyStartedAgentContextsCanShareCoordinatorWorkflowIdentity() {
+        UUID conversationId = UUID.randomUUID();
+        String workflowId = UUID.randomUUID().toString();
+        WorkflowContextHolder holder = new WorkflowContextHolder();
+        WorkflowContextManager manager = new WorkflowContextManager(
+                holder,
+                new WorkflowDefinitionRegistry()
+        );
+
+        WorkflowContext report = manager.start(
+                workflowId,
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING,
+                "Generate a report.",
+                conversationId
+        );
+        assertEquals(workflowId, report.getWorkflowId());
+        manager.complete();
+        manager.clear();
+
+        WorkflowContext email = manager.start(
+                workflowId,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Email the generated report.",
+                conversationId
+        );
+        assertEquals(workflowId, email.getWorkflowId());
+        assertEquals(WorkflowType.EMAIL_COMMUNICATION, email.getWorkflowType());
+        assertEquals(conversationId, email.getConversationId());
+        manager.complete();
+        manager.clear();
+    }
+
+    @Test
     void shouldRecordToolCall() {
         ToolCallEvent event = new ToolCallEvent(
                 "",

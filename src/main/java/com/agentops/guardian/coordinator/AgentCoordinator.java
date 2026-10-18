@@ -35,7 +35,7 @@ public class AgentCoordinator {
 
     private static final String SYSTEM_PROMPT = """
             Classify the current user message into an appropriate routing action:
-            REPORT_REQUEST, REPORT_METADATA_REQUEST, EMAIL_REQUEST, GENERAL_RESPONSE,
+            REPORT_REQUEST, REPORT_METADATA_REQUEST, EMAIL_REQUEST, REPORT_AND_EMAIL_REQUEST, GENERAL_RESPONSE,
             or CLARIFICATION_REQUIRED.
 
             Registered agents:
@@ -44,6 +44,9 @@ public class AgentCoordinator {
               order, or product information retrieval.
             - EmailAgent (EMAIL_REQUEST): email composition and sending.
 
+            Use REPORT_AND_EMAIL_REQUEST only when the user explicitly requests both generating
+            an analytical report and emailing that newly generated report in the same request.
+            The generated report must be attached to the email; do not select an older report.
             Use REPORT_REQUEST only when the user explicitly asks to create, generate, or regenerate
             an analytical report. Requests to retrieve customer data or records, including requests
             such as "give me data of customers in North Michael", are GENERAL_RESPONSE, not report
@@ -150,6 +153,7 @@ public class AgentCoordinator {
             );
             case REPORT_METADATA_REQUEST -> reportMetadataResponse(conversationId);
             case REPORT_REQUEST, EMAIL_REQUEST -> dispatchAgent(request, decision, conversationId);
+            case REPORT_AND_EMAIL_REQUEST -> dispatchReportAndEmail(request, conversationId);
         };
 
         sharedContextService.recordTurn(
@@ -302,6 +306,111 @@ public class AgentCoordinator {
                 yield AgentCoordinatorResponse.completed(
                         decision.action(), result.response(), conversationId.toString()
                 );
+            }
+            case CLARIFICATION_REQUIRED -> AgentCoordinatorResponse.clarification(
+                    requireClarification(result.clarificationQuestion()),
+                    conversationId.toString()
+            );
+            case FAILED -> throw new IllegalStateException(
+                    firstNonBlank(result.errorMessage(), "Selected agent execution failed.")
+            );
+            case NEEDS_DEPENDENCY -> throw new IllegalStateException(
+                    "Agent dependency orchestration is not supported"
+                            + (result.dependencyAgentId() == null || result.dependencyAgentId().isBlank()
+                            ? "." : ": " + result.dependencyAgentId() + ".")
+            );
+        };
+    }
+
+    private AgentCoordinatorResponse dispatchReportAndEmail(
+            AgentCoordinatorRequest request,
+            UUID conversationId
+    ) {
+        String workflowId = UUID.randomUUID().toString();
+        AgentTarget activeTarget = AgentTarget.CUSTOMER_REPORT;
+        String reportArtifactId = null;
+        try {
+            AgentResult reportResult = customerReportAgent.execute(conversationId, request, workflowId);
+            if (reportResult == null || reportResult.status() != AgentResultStatus.SUCCESS) {
+                return agentResultResponse(IntentAction.REPORT_AND_EMAIL_REQUEST, reportResult, conversationId);
+            }
+            if (reportResult.response() == null || reportResult.response().isBlank()) {
+                throw new IllegalStateException("Customer report agent returned no successful response.");
+            }
+            if (reportResult.artifactReference() == null || reportResult.artifactReference().isBlank()) {
+                return AgentCoordinatorResponse.clarification(
+                        "The report was generated without a registered PDF artifact, so it cannot be emailed.",
+                        conversationId.toString()
+                );
+            }
+
+            Optional<ReportArtifactHandoff> handoff = resolveReportHandoff(
+                    conversationId,
+                    reportResult.artifactReference()
+            );
+            if (handoff.isEmpty()) {
+                return AgentCoordinatorResponse.clarification(
+                        "The newly generated report is not available as a registered PDF, so it cannot be emailed.",
+                        conversationId.toString()
+                );
+            }
+
+            reportArtifactId = handoff.get().artifactId();
+            activeTarget = AgentTarget.EMAIL;
+            AgentCoordinatorRequest emailRequest = new AgentCoordinatorRequest(
+                    request.message(),
+                    request.recipient(),
+                    null,
+                    conversationId.toString(),
+                    request.subjectInstructions(),
+                    request.bodyInstructions()
+            );
+            AgentResult emailResult = emailAgent.execute(
+                    conversationId,
+                    emailRequest,
+                    handoff.get(),
+                    workflowId
+            );
+            AgentCoordinatorResponse emailResponse = agentResultResponse(
+                    IntentAction.REPORT_AND_EMAIL_REQUEST,
+                    emailResult,
+                    conversationId
+            );
+            return emailResponse;
+        } catch (ApprovalRequiredException exception) {
+            GovernanceIntervention intervention = exception.getIntervention();
+            requirePersistedIntervention(intervention, exception);
+            pendingAgentTaskRegistry.register(
+                    intervention,
+                    request,
+                    IntentAction.REPORT_AND_EMAIL_REQUEST,
+                    activeTarget.name(),
+                    activeTarget == AgentTarget.EMAIL ? reportArtifactId : null,
+                    exception.getProposedToolArguments()
+            );
+            return AgentCoordinatorResponse.approvalRequired(
+                    IntentAction.REPORT_AND_EMAIL_REQUEST,
+                    intervention.toolName(),
+                    intervention.interventionId(),
+                    conversationId.toString()
+            );
+        }
+    }
+
+    private AgentCoordinatorResponse agentResultResponse(
+            IntentAction action,
+            AgentResult result,
+            UUID conversationId
+    ) {
+        if (result == null || result.status() == null) {
+            throw new IllegalStateException("Selected agent returned no valid execution status.");
+        }
+        return switch (result.status()) {
+            case SUCCESS -> {
+                if (result.response() == null || result.response().isBlank()) {
+                    throw new IllegalStateException("Selected agent returned no successful response.");
+                }
+                yield AgentCoordinatorResponse.completed(action, result.response(), conversationId.toString());
             }
             case CLARIFICATION_REQUIRED -> AgentCoordinatorResponse.clarification(
                     requireClarification(result.clarificationQuestion()),
@@ -558,6 +667,7 @@ public class AgentCoordinator {
         REPORT_REQUEST,
         REPORT_METADATA_REQUEST,
         EMAIL_REQUEST,
+        REPORT_AND_EMAIL_REQUEST,
         GENERAL_RESPONSE,
         CLARIFICATION_REQUIRED
     }

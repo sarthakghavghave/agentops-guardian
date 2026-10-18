@@ -129,7 +129,13 @@ class InterventionServiceTest {
         GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
         when(interventionRepository.findByInterventionId(pending.interventionId()))
                 .thenReturn(java.util.Optional.of(entity));
-        AuditEventEntity unchanged = currentTrajectoryEvent("START", WorkflowState.STARTED, null);
+        AuditEventEntity unchanged = currentTrajectoryEvent(
+                "START",
+                WorkflowState.STARTED,
+                null,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION
+        );
         when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
                 .thenReturn(List.of(unchanged));
 
@@ -159,7 +165,13 @@ class InterventionServiceTest {
         GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
         when(interventionRepository.findByInterventionId(pending.interventionId()))
                 .thenReturn(java.util.Optional.of(entity));
-        AuditEventEntity sparseAuditEvent = currentTrajectoryEvent(null, null, null);
+        AuditEventEntity sparseAuditEvent = currentTrajectoryEvent(
+                null,
+                null,
+                null,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION
+        );
         when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
                 .thenReturn(List.of(sparseAuditEvent));
 
@@ -268,7 +280,13 @@ class InterventionServiceTest {
         when(interventionRepository.findByInterventionId(pending.interventionId()))
                 .thenReturn(java.util.Optional.of(entity));
         AuditEventEntity changedClassification =
-                currentTrajectoryEvent("START", WorkflowState.STARTED, DataClassification.RAW_CUSTOMER_DATA);
+                currentTrajectoryEvent(
+                        "START",
+                        WorkflowState.STARTED,
+                        DataClassification.RAW_CUSTOMER_DATA,
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION
+                );
         when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(pending.workflowId()))
                 .thenReturn(List.of(changedClassification));
 
@@ -279,6 +297,50 @@ class InterventionServiceTest {
 
         assertEquals(409, exception.getStatusCode().value());
         assertEquals(GovernanceInterventionStatus.EXPIRED, entity.toDomain().status());
+    }
+
+    @Test
+    void ignoresEarlierReportTrajectoryWhenApprovingEmailInSameLogicalWorkflow() {
+        String workflowId = "report-email-workflow";
+        GovernanceIntervention pending = service.createPending(
+                emailWorkflow(workflowId),
+                "email-call",
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest("{\"recipient\":\"customer@example.test\"}"),
+                WorkflowCapability.SEND_EMAIL,
+                highRiskDecision()
+        );
+        GovernanceInterventionEntity entity = GovernanceInterventionEntity.from(pending);
+        when(interventionRepository.findByInterventionId(pending.interventionId()))
+                .thenReturn(java.util.Optional.of(entity));
+        AuditEventEntity reportTrajectory = currentTrajectoryEvent(
+                "REPORT",
+                WorkflowState.REPORT_GENERATED,
+                DataClassification.ANALYTICAL,
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING
+        );
+        AuditEventEntity emailProposal = currentTrajectoryEvent(
+                null,
+                null,
+                null,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION
+        );
+        when(emailProposal.getNodeBeforeId()).thenReturn("START");
+        when(emailProposal.getStateBefore()).thenReturn(WorkflowState.STARTED);
+        when(auditEventRepository.findByWorkflowIdOrderByTimestampAscIdAsc(workflowId))
+                .thenReturn(List.of(reportTrajectory, emailProposal));
+
+        GovernanceIntervention approved = service.approve(
+                pending.interventionId(),
+                "reviewer",
+                "Approve report email."
+        );
+
+        assertEquals(GovernanceInterventionStatus.APPROVED, approved.status());
+        assertEquals(WorkflowType.EMAIL_COMMUNICATION, approved.workflowType());
+        verify(interventionRepository).saveAndFlush(entity);
     }
 
     @Test
@@ -322,17 +384,30 @@ class InterventionServiceTest {
     }
 
     private WorkflowContext emailWorkflow() {
+        return emailWorkflow(null);
+    }
+
+    private WorkflowContext emailWorkflow(String workflowId) {
         WorkflowDefinition definition = new WorkflowDefinition(
                 WorkflowType.EMAIL_COMMUNICATION,
                 Set.of(WorkflowCapability.SEND_EMAIL),
                 WorkflowGraph.emailCommunicationGraph()
         );
-        return new WorkflowContext(
-                "EmailAgent",
-                WorkflowType.EMAIL_COMMUNICATION,
-                "Send approved email",
-                definition
-        );
+        return workflowId == null
+                ? new WorkflowContext(
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        "Send approved email",
+                        definition
+                )
+                : new WorkflowContext(
+                        workflowId,
+                        "EmailAgent",
+                        WorkflowType.EMAIL_COMMUNICATION,
+                        "Send approved email",
+                        definition,
+                        null
+                );
     }
 
     private RiskDecision highRiskDecision() {
@@ -348,7 +423,25 @@ class InterventionServiceTest {
             WorkflowState state,
             DataClassification classification
     ) {
+        return currentTrajectoryEvent(
+                nodeId,
+                state,
+                classification,
+                "CustomerReportAgent",
+                WorkflowType.CUSTOMER_REPORTING
+        );
+    }
+
+    private AuditEventEntity currentTrajectoryEvent(
+            String nodeId,
+            WorkflowState state,
+            DataClassification classification,
+            String agentName,
+            WorkflowType workflowType
+    ) {
         AuditEventEntity event = mock(AuditEventEntity.class);
+        when(event.getAgentName()).thenReturn(agentName);
+        when(event.getWorkflowType()).thenReturn(workflowType);
         when(event.getNodeAfterId()).thenReturn(nodeId);
         when(event.getStateAfter()).thenReturn(state);
         when(event.getClassificationAfter()).thenReturn(classification);

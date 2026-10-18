@@ -395,6 +395,10 @@ class EmailAgentTest {
                 "The quarterly analysis was completed.",
                 "The report artifact is ready for email handoff."
         );
+        memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Older report", "data/reports/older.pdf", 64, 1)
+        );
         Artifact report = memory.registerArtifact(
                 conversationId,
                 Artifact.generatedPdfReport("Monthly report", stored.reference(), stored.sizeBytes(), 42)
@@ -407,26 +411,32 @@ class EmailAgentTest {
                         "operator@example.test",
                         "Monthly report",
                         "Please see the attached report.",
-                        true,
-                        report.id()
+                        false,
+                        null
                 ));
+        WorkflowContextManager workflowManager = spy(new WorkflowContextManager(
+                new com.agentops.guardian.governance.context.WorkflowContextHolder(),
+                new com.agentops.guardian.governance.workflow.WorkflowDefinitionRegistry()
+        ));
         EmailAgent agent = new EmailAgent(
                         builder,
                         tools,
-                        mock(WorkflowContextManager.class),
+                        workflowManager,
                         memory,
                         storageService,
                         accessService,
                         null
                 );
         ReportArtifactHandoff handoff = handoff(report);
+        String workflowId = UUID.randomUUID().toString();
         clearInvocations(client.prompt());
 
         AgentResult result = agent.execute(
                 conversationId,
                 new AgentCoordinatorRequest(
                         "Email that report as an attachment to operator@example.test", null, null),
-                handoff
+                handoff,
+                workflowId
         );
 
         assertTrue(result.isSuccess());
@@ -436,6 +446,8 @@ class EmailAgentTest {
                 message.getText().contains("Monthly report")));
         assertTrue(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains(report.id())));
+        assertFalse(decisionInput.getValue().stream().anyMatch(message ->
+                message.getText().contains("Older report")));
         assertFalse(decisionInput.getValue().stream().anyMatch(message ->
                 message.getText().contains("The quarterly analysis was completed.")));
         assertFalse(decisionInput.getValue().stream().anyMatch(message ->
@@ -453,6 +465,15 @@ class EmailAgentTest {
         assertEquals("application/pdf", attachment.getValue().contentType());
         assertArrayEquals(pdfBytes, attachment.getValue().content());
         verify(tools).clearAttachmentForExecution();
+        verify(workflowManager).start(
+                workflowId,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                "Process the email request using explicitly supplied context and governed history access.",
+                conversationId
+        );
+        verify(workflowManager).complete();
+        verify(workflowManager, atLeastOnce()).clear();
     }
 
     @Test

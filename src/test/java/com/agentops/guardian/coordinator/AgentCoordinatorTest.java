@@ -18,19 +18,23 @@ import com.agentops.guardian.governance.exception.ApprovalRequiredException;
 import com.agentops.guardian.governance.execution.ApprovedActionGrant;
 import com.agentops.guardian.governance.intervention.GovernanceIntervention;
 import com.agentops.guardian.governance.intervention.GovernanceInterventionStatus;
+import com.agentops.guardian.governance.model.DataClassification;
 import com.agentops.guardian.governance.risk.RiskLevel;
 import com.agentops.guardian.governance.workflow.WorkflowCapability;
 import com.agentops.guardian.governance.workflow.WorkflowType;
 import com.agentops.guardian.tool.ReportTools;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -122,6 +126,199 @@ class AgentCoordinatorTest {
         assertTrue(response.response().contains("Analytical customer report PDF saved"));
         verify(fixture.reportAgent).execute(any(), any());
         verifyNoInteractions(fixture.emailAgent, fixture.customerSupportAgent);
+    }
+
+    @Test
+    void reportAndEmailRequestHandsOffOnlyTheNewReportUnderOneWorkflowId() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_AND_EMAIL_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        Artifact olderReport = fixture.memory.registerArtifact(
+                conversationId,
+                Artifact.generatedPdfReport("Older report", "data/reports/older.pdf", 128, 2)
+        );
+        AgentCoordinatorRequest request = new AgentCoordinatorRequest(
+                "Generate an analytical report of customers in North Michael and email it.",
+                "operator@example.test",
+                null,
+                conversationId.toString(),
+                "North Michael customer analysis",
+                "Please see the attached analysis."
+        );
+        doAnswer(invocation -> {
+            String workflowId = invocation.getArgument(2);
+            assertDoesNotThrow(() -> UUID.fromString(workflowId));
+            Artifact generated = fixture.memory.registerArtifact(
+                    conversationId,
+                    Artifact.generatedPdfReport("New report", "data/reports/new.pdf", 256, 4)
+            );
+            return AgentResult.success("Report generated.", generated.id());
+        }).when(fixture.reportAgent).execute(
+                eq(conversationId), any(AgentCoordinatorRequest.class), anyString()
+        );
+        doReturn(AgentResult.success("Email provider accepted the submission."))
+                .when(fixture.emailAgent).execute(
+                        eq(conversationId),
+                        any(AgentCoordinatorRequest.class),
+                        any(ReportArtifactHandoff.class),
+                        anyString()
+                );
+
+        AgentCoordinatorResponse response = fixture.coordinator.handle(request);
+
+        assertEquals(AgentCoordinator.IntentAction.REPORT_AND_EMAIL_REQUEST, response.action());
+        assertFalse(response.clarificationRequired());
+        ArgumentCaptor<String> workflowId = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<ReportArtifactHandoff> handoff = ArgumentCaptor.forClass(ReportArtifactHandoff.class);
+        ArgumentCaptor<AgentCoordinatorRequest> emailRequest =
+                ArgumentCaptor.forClass(AgentCoordinatorRequest.class);
+        InOrder sequence = inOrder(fixture.reportAgent, fixture.emailAgent);
+        sequence.verify(fixture.reportAgent).execute(
+                eq(conversationId), eq(request), workflowId.capture()
+        );
+        sequence.verify(fixture.emailAgent).execute(
+                eq(conversationId), emailRequest.capture(), handoff.capture(), eq(workflowId.getValue())
+        );
+        assertEquals("New report", handoff.getValue().title());
+        assertNull(emailRequest.getValue().report());
+        assertEquals(request.recipient(), emailRequest.getValue().recipient());
+        assertEquals(request.subjectInstructions(), emailRequest.getValue().subjectInstructions());
+        assertEquals(request.bodyInstructions(), emailRequest.getValue().bodyInstructions());
+        assertNotEquals(olderReport.id(), handoff.getValue().artifactId());
+    }
+
+    @Test
+    void reportAndEmailRequestStopsBeforeEmailWhenReportGenerationFails() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_AND_EMAIL_REQUEST));
+        doReturn(AgentResult.failure("Report generation failed."))
+                .when(fixture.reportAgent).execute(
+                        any(UUID.class), any(AgentCoordinatorRequest.class), anyString()
+                );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> fixture.coordinator.handle(
+                        new AgentCoordinatorRequest(
+                                "Generate a customer report and email it.",
+                                "operator@example.test",
+                                null
+                        )
+                )
+        );
+
+        assertEquals("Report generation failed.", exception.getMessage());
+        verifyNoInteractions(fixture.emailAgent);
+    }
+
+    @Test
+    void compositeEmailApprovalResumesWithTheSameWorkflowAndGeneratedArtifact() {
+        Fixture fixture = new Fixture(action(AgentCoordinator.IntentAction.REPORT_AND_EMAIL_REQUEST));
+        UUID conversationId = fixture.memory.open(null);
+        String approvedArguments = """
+                {"recipient":"operator@example.test","subject":"Customer analysis","body":"Please see the report."}
+                """;
+        String toolCallId = "composite-send-call";
+        String interventionId = "composite-intervention";
+        AtomicReference<String> workflowId = new AtomicReference<>();
+        AtomicReference<String> artifactId = new AtomicReference<>();
+        doAnswer(invocation -> {
+            Artifact artifact = fixture.memory.registerArtifact(
+                    conversationId,
+                    Artifact.generatedPdfReport("New report", "data/reports/new.pdf", 256, 4)
+            );
+            artifactId.set(artifact.id());
+            return AgentResult.success("Report generated.", artifact.id());
+        }).when(fixture.reportAgent).execute(
+                eq(conversationId), any(AgentCoordinatorRequest.class), anyString()
+        );
+        doAnswer(invocation -> {
+            workflowId.set(invocation.getArgument(3));
+            GovernanceIntervention pendingIntervention = new GovernanceIntervention(
+                    interventionId,
+                    workflowId.get(),
+                    toolCallId,
+                    "EmailAgent",
+                    WorkflowType.EMAIL_COMMUNICATION,
+                    WorkflowCapability.SEND_EMAIL,
+                    RiskLevel.HIGH,
+                    com.agentops.guardian.governance.risk.GovernanceIntervention.REQUIRE_APPROVAL,
+                    GovernanceInterventionStatus.PENDING,
+                    "Email approval required.",
+                    Instant.now(),
+                    null,
+                    null,
+                    null,
+                    "REPORT",
+                    WorkflowState.REPORT_GENERATED,
+                    DataClassification.ANALYTICAL,
+                    conversationId,
+                    "sendEmail",
+                    ApprovedActionGrant.argumentsDigest(approvedArguments)
+            );
+            throw new ApprovalRequiredException(pendingIntervention, approvedArguments);
+        }).when(fixture.emailAgent).execute(
+                eq(conversationId),
+                any(AgentCoordinatorRequest.class),
+                any(ReportArtifactHandoff.class),
+                anyString()
+        );
+        when(fixture.emailAgent.resumeApprovedAction(
+                any(UUID.class), anyString(), anyString(), anyString(), anyString(), anyString(), any()
+        )).thenReturn(AgentResult.success("Email provider accepted the submission."));
+
+        AgentCoordinatorResponse pending = fixture.coordinator.handle(new AgentCoordinatorRequest(
+                "Generate a customer report and email it.",
+                "operator@example.test",
+                null,
+                conversationId.toString()
+        ));
+        GovernanceIntervention approved = new GovernanceIntervention(
+                interventionId,
+                workflowId.get(),
+                toolCallId,
+                "EmailAgent",
+                WorkflowType.EMAIL_COMMUNICATION,
+                WorkflowCapability.SEND_EMAIL,
+                RiskLevel.HIGH,
+                com.agentops.guardian.governance.risk.GovernanceIntervention.REQUIRE_APPROVAL,
+                GovernanceInterventionStatus.PENDING,
+                "Email approval required.",
+                Instant.now(),
+                null,
+                null,
+                null,
+                "REPORT",
+                WorkflowState.REPORT_GENERATED,
+                DataClassification.ANALYTICAL,
+                conversationId,
+                "sendEmail",
+                ApprovedActionGrant.argumentsDigest(approvedArguments)
+        ).approve("reviewer", "Approved.", Instant.now());
+
+        AgentCoordinator.TaskResumeResult resumed = fixture.coordinator.resumeApproved(approved);
+
+        assertTrue(pending.approvalRequired());
+        assertEquals("COMPLETED", resumed.status());
+        verify(fixture.reportAgent, times(1)).execute(
+                eq(conversationId), any(AgentCoordinatorRequest.class), anyString()
+        );
+        verify(fixture.emailAgent, times(1)).execute(
+                eq(conversationId),
+                any(AgentCoordinatorRequest.class),
+                any(ReportArtifactHandoff.class),
+                anyString()
+        );
+        ArgumentCaptor<ReportArtifactHandoff> resumedHandoff =
+                ArgumentCaptor.forClass(ReportArtifactHandoff.class);
+        verify(fixture.emailAgent).resumeApprovedAction(
+                eq(conversationId),
+                eq(workflowId.get()),
+                eq(interventionId),
+                eq(toolCallId),
+                eq("sendEmail"),
+                eq(approvedArguments),
+                resumedHandoff.capture()
+        );
+        assertEquals(artifactId.get(), resumedHandoff.getValue().artifactId());
     }
 
     @Test
