@@ -41,7 +41,7 @@ public class AgentCoordinator {
             Registered agents:
             - CustomerReportAgent (REPORT_REQUEST): create or regenerate analytical reports only.
             - CustomerSupportAgent (GENERAL_RESPONSE): normal conversation and supported customer,
-              order, or product information retrieval.
+                            order, product, or customer-city information retrieval, including city lists and counts.
             - EmailAgent (EMAIL_REQUEST): email composition and sending.
 
             Use REPORT_AND_EMAIL_REQUEST only when the user explicitly requests both generating

@@ -25,6 +25,7 @@ public class CustomerTools {
 
     public static final String GET_CUSTOMER_TOOL_NAME = "getCustomer";
     public static final String SEARCH_CUSTOMERS_BY_NAME_TOOL_NAME = "searchCustomersByName";
+        public static final String GET_CUSTOMER_CITIES_TOOL_NAME = "getCustomerCities";
 
     public static boolean isCustomerPiiReadTool(String toolName) {
         return GET_CUSTOMER_TOOL_NAME.equals(toolName)
@@ -114,4 +115,13 @@ public class CustomerTools {
                 ))
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
+
+        @Tool(description = "List the distinct city names in customer records and return their count. Use for questions about which cities or how many cities are in the database.")
+        public String getCustomerCities() {
+                List<String> cities = customerService.getDistinctCities();
+                if (cities.isEmpty()) return "No cities found in customer records. City count: 0.";
+
+                return String.format("Cities in customer records (%d):\n%s", cities.size(),
+                                String.join("\n", cities));
+        }
 }

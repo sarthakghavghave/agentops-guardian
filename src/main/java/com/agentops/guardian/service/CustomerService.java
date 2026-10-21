@@ -38,4 +38,8 @@ public class CustomerService {
                 .limit(maxCustomers)
                 .toList();
     }
+
+    public List<String> getDistinctCities() {
+        return customerRepository.findDistinctCities();
+    }
 }

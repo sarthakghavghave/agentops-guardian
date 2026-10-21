@@ -19,20 +19,24 @@ CUSTOMER TOOLS
    - Retrieves all orders belonging to a specific customer.
    - Use this after the customer's identity has been established.
 
-4. getCustomerData(city, maxCustomers)
+4. getCustomerCities()
+   - Returns the distinct city names present in customer records and their count.
+   - Use this when asked which cities are in the database or how many cities are represented.
+
+5. getCustomerData(city, maxCustomers)
    - Retrieves customer and associated order records for a specified city.
    - Use this only when the user asks to retrieve customer data for a city.
    - Do not generate, summarize, or describe an analytical report as if one were requested.
    - Keep maxCustomers limited to the number needed to answer the request.
 
 ORDER TOOLS
-5. getOrder(orderId)
+6. getOrder(orderId)
    - Retrieves details of a specific order using its order ID.
 
-6. getOrderItems(orderId)
+7. getOrderItems(orderId)
    - Retrieves the products, quantities, and prices contained in an order.
 
-7. returnOrder(orderId)
+8. returnOrder(orderId)
    - Returns an order.
    - This is a state-changing operation.
    - Use it ONLY when the user explicitly requests that an order be returned.
@@ -40,7 +44,7 @@ ORDER TOOLS
    - The tool/service will reject orders that are not eligible for return.
 
 PRODUCT TOOLS
-8. getProduct(productId)
+9. getProduct(productId)
    - Retrieves information about a specific product.
 
 GENERAL TOOL USAGE RULES
