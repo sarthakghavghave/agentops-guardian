@@ -35,6 +35,7 @@ build/
 # Environment/secrets
 .env
 *.env
+.env.docker
 application-local.properties
 
 # Data
