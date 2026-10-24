@@ -3,6 +3,7 @@ package com.agentops.guardian.tool;
 import jakarta.mail.Session;
 import jakarta.mail.Part;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.Multipart;
 import jakarta.mail.BodyPart;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -42,7 +43,9 @@ class GmailSmtpEmailAdapterTest {
         message.saveChanges();
 
         assertFalse(messageId.isBlank());
-        assertEquals("guardian@example.test", message.getFrom()[0].toString());
+        InternetAddress from = (InternetAddress) message.getFrom()[0];
+        assertEquals("guardian@example.test", from.getAddress());
+        assertEquals("AgentOps", from.getPersonal());
         assertEquals(RECIPIENT, message.getAllRecipients()[0].toString());
         assertEquals(SUBJECT, message.getSubject());
         assertEquals(BODY, message.getContent());

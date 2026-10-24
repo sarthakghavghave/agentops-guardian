@@ -12,6 +12,7 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Locale;
@@ -68,7 +69,7 @@ public class GmailSmtpEmailAdapter {
                     attachment != null,
                     StandardCharsets.UTF_8.name()
             );
-            helper.setFrom(sender);
+            helper.setFrom(sender, "AgentOps");
             helper.setTo(recipient);
             helper.setSubject(subject);
             helper.setText(body, false);
@@ -79,7 +80,7 @@ public class GmailSmtpEmailAdapter {
                         attachment.contentType()
                 );
             }
-        } catch (MessagingException exception) {
+        } catch (MessagingException | UnsupportedEncodingException exception) {
             throw new IllegalStateException("Unable to construct the email message.", exception);
         }
 
