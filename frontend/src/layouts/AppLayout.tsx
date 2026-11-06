@@ -8,6 +8,7 @@ const pageNames: Record<string, string> = {
   '/workflows': 'Workflows',
   '/interventions': 'Interventions',
   '/policies': 'Policies',
+  '/architecture': 'Architecture',
 }
 
 export function AppLayout() {

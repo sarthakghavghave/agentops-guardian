@@ -1,4 +1,11 @@
-import { Activity, ArrowUpRight, ClipboardCheck, LayoutDashboard, Workflow } from 'lucide-react'
+import {
+  Activity,
+  ArrowUpRight,
+  ClipboardCheck,
+  LayoutDashboard,
+  Waypoints,
+  Workflow,
+} from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 const navigation = [
@@ -54,6 +61,24 @@ export function Sidebar() {
           <ArrowUpRight aria-hidden="true" size={17} strokeWidth={1.8} />
           Agent Portal
         </a>
+        <div className="ml-auto flex shrink-0 items-center border-l border-white/10 pl-2 md:ml-0 md:mt-4 md:w-full md:flex-col md:items-stretch md:border-l-0 md:border-t md:pl-0 md:pt-4">
+          <p className="hidden px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 md:block">
+            Reference
+          </p>
+          <NavLink
+            to="/architecture"
+            className={({ isActive }) =>
+              `flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${
+                isActive
+                  ? 'bg-accent/20 font-medium text-teal-100'
+                  : 'text-teal-200/80 hover:bg-accent/10 hover:text-teal-100'
+              }`
+            }
+          >
+            <Waypoints aria-hidden="true" size={17} strokeWidth={1.8} />
+            Architecture
+          </NavLink>
+        </div>
       </nav>
 
     </aside>

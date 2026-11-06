@@ -9,6 +9,7 @@ import { PolicyDetailsPage } from './pages/PolicyDetailsPage'
 import { PolicyAuthoringPage } from './pages/PolicyAuthoringPage'
 import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage'
 import { WorkflowsPage } from './pages/WorkflowsPage'
+import { ArchitecturePage } from './pages/ArchitecturePage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ export function App() {
             <Route path="/policies/new" element={<PolicyAuthoringPage />} />
             <Route path="/policies/:policyId/edit" element={<PolicyAuthoringPage />} />
             <Route path="/policies/:policyId" element={<PolicyDetailsPage />} />
+            <Route path="/architecture" element={<ArchitecturePage />} />
             <Route path="*" element={<Navigate replace to="/dashboard" />} />
           </Route>
         </Routes>
