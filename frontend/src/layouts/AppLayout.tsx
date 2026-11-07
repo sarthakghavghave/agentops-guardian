@@ -32,6 +32,23 @@ export function AppLayout() {
           </div>
           <div className="flex items-center gap-4">
             {pathname === '/dashboard' && <GovernanceToggle />}
+            <a
+              aria-label="Visit AgentOps Guardian on GitHub (opens in a new tab)"
+              className="inline-flex items-center gap-2 rounded-full border border-[#24292f] bg-[#24292f] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:border-[#3b434b] hover:bg-[#3b434b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#24292f]"
+              href="https://github.com/sarthakghavghave/agentops-guardian"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              <img
+                alt=""
+                aria-hidden="true"
+                className="h-[20px] w-[20px] brightness-0 invert"
+                height="30"
+                src="https://img.icons8.com/ios-glyphs/30/github.png"
+                width="30"
+              />
+              GitHub
+            </a>
             <button
               aria-label="Notifications"
               className="rounded-md p-2 text-slate-500 hover:bg-slate-100"

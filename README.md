@@ -2,11 +2,14 @@
 
 AgentOps Guardian is a Spring Boot application that governs tool use by AI agents in customer workflows. It checks proposed actions against configured policies, the current workflow, and runtime risk before allowing execution.
 
+Check out the application: [Governance Dashboard](https://agentguardian.onrender.com) · [Agent Coordinator Chat](https://agents-portal.onrender.com)
+
 ## Problem
 
 AI agents can perform multi-step tasks using tools, including reading customer information and sending email. A per-tool permission check does not capture whether an action is appropriate in the context of earlier workflow steps. AgentOps Guardian evaluates tool proposals in their workflow context and records the decisions and outcomes.
 
 ## Architecture
+Check out the [Architecture Page](https://agentguardian.onrender.com/architecture)
 
 ![alt text](figures/architecture.png)
 
@@ -15,18 +18,20 @@ AI agents can perform multi-step tasks using tools, including reading customer i
 ```text
 agentops-guardian/
 ├── data/
-│   ├── customers.csv
-│   ├── orders.csv
-│   ├── order_items.csv
-│   ├── products.csv
-│   ├── reviews.csv
-│   └── users.csv
+│   └── reports/        # Generated PDF reports location
+|
+├── figures/
+│   └── architecture.png
+|
+├── agent-portal/       # Agent coordinator chat frontend
+├── frontend/           # Governance dashboard frontend
 |
 ├── src/
 │   ├── main/
 │   │   ├── java/
 │   │   │   └── com/agentops/guardian/
 │   │   │       ├── agent/
+│   │   │       ├── config/
 │   │   │       ├── controller/
 │   │   │       ├── coordinator/
 │   │   │       ├── domain/
@@ -39,8 +44,7 @@ agentops-guardian/
 |   |   |
 │   │   └── resources/
 │   │       ├── application.properties
-│   │       ├── prompts/
-│   │       └── static/
+│   │       └── prompts/
 |   |
 │   └── test/
 │       └── java/
@@ -55,7 +59,7 @@ agentops-guardian/
 
 ## Technology and deployment
 
-- Java 25, Spring Boot 4, Spring AI, and Maven
+- Java 25, Spring Boot 4, Spring AI 2, and Maven
 - React, TypeScript, and Vite for both frontends
 - Google Gemini for intent and agent model calls
 - Spring Data JPA with PostgreSQL; the deployed database is Neon
@@ -66,6 +70,7 @@ agentops-guardian/
 
 - Configurable policies, workflow rules, and deterministic risk assessment are separate governance checks. Risk does not override a policy block.
 - Approval is tied to a specific proposed tool action; it is not a reusable permission.
+- The email payload or content is not governed.
 - Conversation history and pending task continuation are held in application memory. A restart can prevent a pending task from resuming.
 - Generated analytical PDFs are stored in the backend runtime filesystem and used for report handoff.
 - The backend currently has no authentication layer, and the declared CORS origins property is not yet connected to an active CORS configuration. These should be addressed before relying on public deployment access.

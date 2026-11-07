@@ -103,6 +103,32 @@ a {
   transition: border-color 140ms ease, color 140ms ease;
 }
 
+.github-link {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #24292f;
+  border-radius: 8px;
+  background: #24292f;
+  padding: 0 13px;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.github-mark {
+  width: 20px;
+  height: 20px;
+  filter: brightness(0) invert(1);
+}
+
+.github-link:hover {
+  border-color: #3b434b;
+  background: #3b434b;
+}
+
 .guardian-link:hover {
   border-color: #087f82;
   color: #087f82;
@@ -1315,6 +1341,7 @@ h1 {
   }
 
   .guardian-link,
+  .github-link,
   .new-conversation-button {
     min-height: 35px;
     padding: 0 9px;

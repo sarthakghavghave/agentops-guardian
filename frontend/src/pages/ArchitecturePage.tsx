@@ -124,19 +124,38 @@ function StageLabel({ children }: { children: string }) {
 export function ArchitecturePage() {
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-xl font-semibold tracking-tight text-ink-950">
-            How AgentOps Guardian works
-          </h2>
-          <span className="rounded-full border border-line bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
-            Architecture
-          </span>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-semibold tracking-tight text-ink-950">
+              How AgentOps Guardian works
+            </h2>
+            <span className="rounded-full border border-line bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+              Architecture
+            </span>
+          </div>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
+            A high-level view of how requests reach agents, how proposed tool actions are governed,
+            and where the application stores data and sends updates.
+          </p>
         </div>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
-          A high-level view of how requests reach agents, how proposed tool actions are governed,
-          and where the application stores data and sends updates.
-        </p>
+        <a
+          className="inline-flex items-center gap-2 rounded-lg border border-[#24292f] bg-[#24292f] px-3 py-2 text-xs font-medium text-white transition-colors hover:border-[#3b434b] hover:bg-[#3b434b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#24292f]"
+          href="https://github.com/sarthakghavghave/agentops-guardian/blob/main/figures/architecture.png"
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          <img
+            alt=""
+            aria-hidden="true"
+            className="h-[20px] w-[20px] brightness-0 invert"
+            height="30"
+            src="https://img.icons8.com/ios-glyphs/30/github.png"
+            width="30"
+          />
+          High-level diagram on GitHub
+          <span className="sr-only">(opens in a new tab)</span>
+        </a>
       </div>
 
       <section

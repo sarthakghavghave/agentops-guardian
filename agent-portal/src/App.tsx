@@ -146,6 +146,23 @@ export function App() {
             <MessageSquarePlus aria-hidden="true" size={15} />
             New conversation
           </button>
+          <a
+            aria-label="Visit AgentOps Guardian on GitHub (opens in a new tab)"
+            className="github-link"
+            href="https://github.com/sarthakghavghave/agentops-guardian"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <img
+              alt=""
+              aria-hidden="true"
+              className="github-mark"
+              height="30"
+              src="https://img.icons8.com/ios-glyphs/30/github.png"
+              width="30"
+            />
+            GitHub
+          </a>
           <a className="guardian-link" href={guardianUrl}>
             Open Guardian
             <ArrowUpRight aria-hidden="true" size={15} />

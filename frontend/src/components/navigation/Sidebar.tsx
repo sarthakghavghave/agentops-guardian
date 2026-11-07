@@ -2,6 +2,7 @@ import {
   Activity,
   ArrowUpRight,
   ClipboardCheck,
+  ChevronDown,
   LayoutDashboard,
   Waypoints,
   Workflow,
@@ -81,6 +82,70 @@ export function Sidebar() {
         </div>
       </nav>
 
+      <details className="group mt-auto border-t border-white/10 px-4 py-3" open>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+          Technology stack
+          <ChevronDown
+            aria-hidden="true"
+            className="shrink-0 transition-transform group-open:rotate-180"
+            size={14}
+          />
+        </summary>
+        <ul className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-1 md:space-y-2.5 md:gap-0">
+          <li className="flex items-center gap-2.5">
+            <img
+              alt=""
+              className="h-5 w-5 shrink-0 object-contain"
+              height="20"
+              src="https://img.icons8.com/color/48/spring-logo.png"
+              width="20"
+            />
+            <span className="min-w-0">
+              <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-500">Backend</span>
+              <span className="block text-[11px] leading-4 text-slate-300">Spring Boot · Spring AI</span>
+            </span>
+          </li>
+          <li className="flex items-center gap-2.5">
+            <img
+              alt=""
+              className="h-5 w-5 shrink-0 object-contain"
+              height="20"
+              src="https://img.icons8.com/color/48/postgreesql.png"
+              width="20"
+            />
+            <span className="min-w-0">
+              <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-500">Database</span>
+              <span className="block text-[11px] leading-4 text-slate-300">PostgreSQL · Neon</span>
+            </span>
+          </li>
+          <li className="flex items-center gap-2.5">
+            <img
+              alt=""
+              className="h-5 w-5 shrink-0 object-contain"
+              height="20"
+              src="https://img.icons8.com/officexs/16/react.png"
+              width="20"
+            />
+            <span className="min-w-0">
+              <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-500">Frontend</span>
+              <span className="block text-[11px] leading-4 text-slate-300">React · Vite</span>
+            </span>
+          </li>
+          <li className="flex items-center gap-2.5">
+            <img
+              alt=""
+              className="h-5 w-5 shrink-0 object-contain"
+              height="20"
+              src="https://img.icons8.com/color/48/docker.png"
+              width="20"
+            />
+            <span className="min-w-0">
+              <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-500">Deployment</span>
+              <span className="block text-[11px] leading-4 text-slate-300">Docker · Render</span>
+            </span>
+          </li>
+        </ul>
+      </details>
     </aside>
   )
 }
