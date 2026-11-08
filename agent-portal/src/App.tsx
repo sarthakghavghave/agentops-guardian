@@ -8,6 +8,7 @@ import {
 } from './features/chat/chatSession'
 import { AgentCatalog } from './features/governance/AgentCatalog'
 import { GovernanceActivityPanel } from './features/governance/GovernanceActivityPanel'
+import { ScenarioSamplesPanel } from './features/scenarios/ScenarioSamplesPanel'
 import {
   selectConversationEvents,
 } from './features/governance/governanceActivity'
@@ -84,13 +85,22 @@ export function App() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const text = draft.trim()
-    if (!text || isLoading || failedMessageId !== null) return
+    submitMessage(draft)
+  }
 
+  function submitMessage(message: string) {
+    const text = message.trim()
+    if (!text || isLoading || failedMessageId !== null) return
     const messageId = nextMessageId.current++
     setMessages((current) => [...current, { id: messageId, role: 'user', text }])
     setDraft('')
     void sendMessage(messageId, text)
+  }
+
+  function selectScenarioMessage(message: string) {
+    if (isLoading || failedMessageId !== null) return
+    setDraft(message)
+    composerRef.current?.focus()
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -312,6 +322,11 @@ export function App() {
             conversationId={conversationId}
             events={conversationEvents}
             status={governanceActivity.status}
+          />
+          <ScenarioSamplesPanel
+            disabled={isLoading || failedMessageId !== null}
+            onSelectMessage={selectScenarioMessage}
+            onSendMessage={submitMessage}
           />
         </aside>
       </div>

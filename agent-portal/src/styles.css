@@ -894,11 +894,13 @@ h1 {
   min-height: 0;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
   padding: 25px 0 18px;
 }
 
 .agent-catalog,
-.governance-panel {
+.governance-panel,
+.scenario-panel {
   overflow: hidden;
   border: 1px solid #e0e7e9;
   border-radius: 12px;
@@ -924,6 +926,183 @@ h1 {
   flex: 0 0 auto;
   flex-direction: column;
   padding: 14px;
+}
+
+.scenario-panel {
+  flex: 0 0 auto;
+  background: rgb(255 255 255 / 94%);
+}
+
+.scenario-panel-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  padding: 12px 14px;
+  color: #52666d;
+  cursor: pointer;
+  text-align: left;
+}
+
+.scenario-panel-heading:hover,
+.scenario-panel-heading:focus-visible {
+  background: #f3f9f8;
+  color: #087f82;
+}
+
+.scenario-panel-heading:focus-visible,
+.scenario-list-item:focus-visible,
+.scenario-back:focus-visible,
+.scenario-message-text:focus-visible,
+.scenario-send-button:focus-visible {
+  outline: 2px solid #087f82;
+  outline-offset: -2px;
+}
+
+.scenario-panel-heading strong,
+.scenario-panel-heading small {
+  display: block;
+}
+
+.scenario-panel-heading strong {
+  color: #304249;
+  font-size: 11px;
+}
+
+.scenario-panel-heading small {
+  margin-top: 3px;
+  color: #879499;
+  font-size: 9px;
+}
+
+.scenario-panel-content {
+  max-height: 250px;
+  overflow-y: auto;
+  border-top: 1px solid #edf0f1;
+  padding: 7px 10px 10px;
+}
+
+.scenario-list,
+.scenario-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scenario-list-item {
+  display: flex;
+  min-height: 33px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 6px 8px;
+  color: #43565d;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+}
+
+.scenario-list-item:hover {
+  background: #f1f8f6;
+  color: #087f82;
+}
+
+.scenario-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 5px;
+  color: #718087;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+}
+
+.scenario-back:hover {
+  color: #087f82;
+}
+
+.scenario-detail-title {
+  margin: 6px 5px 8px;
+  color: #304249;
+  font-size: 10px;
+}
+
+.scenario-message-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border: 1px solid #e6edec;
+  border-radius: 7px;
+  background: #fbfdfc;
+  padding: 3px;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.scenario-message-row:hover {
+  border-color: #c9e0dc;
+  background: #f4faf8;
+}
+
+.scenario-message-text {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 6px;
+  color: #52666d;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.scenario-message-text:hover {
+  color: #263d43;
+}
+
+.scenario-send-button {
+  display: inline-flex;
+  width: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  border: 1px solid #d6e8e4;
+  border-radius: 5px;
+  background: white;
+  color: #087f82;
+  cursor: pointer;
+}
+
+.scenario-send-button:hover {
+  border-color: #087f82;
+  background: #eef8f6;
+}
+
+.scenario-message-text:disabled,
+.scenario-send-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.scenario-panel-hint {
+  margin: 7px 3px 0;
+  color: #89969b;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .side-panel-heading {
@@ -1363,11 +1542,17 @@ h1 {
   .activity-sidebar {
     display: grid;
     min-height: 0;
-    flex: 0 0 205px;
+    flex: 0 0 290px;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     gap: 7px;
     overflow: hidden;
     padding: 0 0 7px;
+  }
+
+  .scenario-panel {
+    grid-column: 1 / -1;
+    min-width: 0;
   }
 
   .message-list {
@@ -1382,6 +1567,10 @@ h1 {
     min-width: 0;
     max-height: 198px;
     padding: 8px;
+  }
+
+  .scenario-panel-content {
+    max-height: 130px;
   }
 
   .agent-catalog {
