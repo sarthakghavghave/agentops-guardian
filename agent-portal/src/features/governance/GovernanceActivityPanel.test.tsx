@@ -49,6 +49,31 @@ function blockedHistoryEvent(): GovernanceEventStreamPayload {
 }
 
 describe('GovernanceActivityPanel', () => {
+  it('shows intervention creation and its pending status as a governance activity', () => {
+    const event = blockedHistoryEvent()
+    event.event.eventType = 'INTERVENTION_CREATED'
+    event.event.toolName = 'sendEmail'
+    event.event.policyDecision = null
+    event.event.policyReason = null
+    event.event.executionStatus = null
+    event.event.intervention = 'REQUIRE_APPROVAL'
+    event.event.interventionId = 'intervention-1'
+    event.event.interventionStatus = 'PENDING'
+    event.event.riskLevel = 'HIGH'
+
+    render(
+      <GovernanceActivityPanel
+        conversationId="conversation-1"
+        events={[event]}
+        status="LIVE"
+      />,
+    )
+
+    expect(screen.getByText('Approval requested · sendEmail')).toBeTruthy()
+    expect(screen.getByText('Risk HIGH')).toBeTruthy()
+    expect(screen.getByText('Status PENDING')).toBeTruthy()
+  })
+
   it('presents a blocked conversation-history decision as a dismissible alert with its reason', () => {
     render(
       <GovernanceActivityPanel

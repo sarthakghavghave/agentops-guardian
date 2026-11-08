@@ -232,8 +232,8 @@ export function App() {
                       {message.response.approvalRequired && (
                         <span className="response-note">
                           Approval required
-                          {message.response.interventionId
-                            ? ` · Intervention ${message.response.interventionId}`
+                          {message.response
+                            ? ` · Intervention ${message.response.action}`
                             : ''}
                         </span>
                       )}
@@ -283,7 +283,7 @@ export function App() {
           {failedMessage && <span className="sr-only">Failed message: {failedMessage.text}</span>}
         </div>
 
-        <InterventionReview conversationId={conversationId} />
+        <InterventionReview conversationId={conversationId} events={conversationEvents} />
 
         <form className="composer" onSubmit={handleSubmit}>
           <label className="sr-only" htmlFor="message-composer">Message the agent</label>

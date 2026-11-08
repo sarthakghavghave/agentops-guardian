@@ -120,7 +120,7 @@ export function GovernanceActivityPanel({ conversationId, events, status }: Prop
 
 function ActivityEvent({ payload }: { payload: GovernanceEventStreamPayload }) {
   const event = payload.event
-  const action = event.toolName || event.capability || event.eventType.replace(/_/g, ' ')
+  const action = getActivityLabel(event)
   const outcomes = getGovernanceOutcomes(event)
 
   return (
@@ -153,8 +153,28 @@ function ActivityEvent({ payload }: { payload: GovernanceEventStreamPayload }) {
   )
 }
 
+function getActivityLabel(event: WorkflowTrajectoryEvent): string {
+  switch (event.eventType) {
+    case 'INTERVENTION_CREATED':
+      return `Approval requested · ${event.toolName || event.capability || 'Governed action'}`
+    case 'INTERVENTION_APPROVED':
+      return `Intervention approved · ${event.toolName || event.capability || 'Governed action'}`
+    case 'INTERVENTION_REJECTED':
+      return `Intervention rejected · ${event.toolName || event.capability || 'Governed action'}`
+    case 'INTERVENTION_EXPIRED':
+      return `Intervention expired · ${event.toolName || event.capability || 'Governed action'}`
+    default:
+      return event.toolName || event.capability || event.eventType.replace(/_/g, ' ')
+  }
+}
+
 function getGovernanceOutcomes(event: WorkflowTrajectoryEvent): string[] {
   const outcomes: string[] = []
+  if (event.eventType.startsWith('INTERVENTION_')) {
+    if (event.riskLevel) outcomes.push(`Risk ${event.riskLevel}`)
+    if (event.interventionStatus) outcomes.push(`Status ${event.interventionStatus}`)
+    return outcomes
+  }
   if (event.policyDecision) outcomes.push(`Policy ${event.policyDecision}`)
   if (event.riskLevel) outcomes.push(`Risk ${event.riskLevel}`)
   if (event.intervention && event.intervention !== 'NONE') {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Check, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import {
   approveIntervention,
@@ -7,6 +7,7 @@ import {
 } from '../../api/interventions'
 import { getWorkflowTrajectory } from '../../api/workflows'
 import type {
+  GovernanceEventStreamPayload,
   GovernanceInterventionResponse,
   WorkflowTrajectoryResponse,
 } from '../../types/api'
@@ -31,9 +32,17 @@ type ResolutionResult = {
 
 type InterventionReviewProps = {
   conversationId: string | null
+  events?: GovernanceEventStreamPayload[]
 }
 
-export function InterventionReview({ conversationId }: InterventionReviewProps) {
+const interventionLifecycleEvents = new Set([
+  'INTERVENTION_CREATED',
+  'INTERVENTION_APPROVED',
+  'INTERVENTION_REJECTED',
+  'INTERVENTION_EXPIRED',
+])
+
+export function InterventionReview({ conversationId, events = [] }: InterventionReviewProps) {
   const [interventions, setInterventions] = useState<GovernanceInterventionResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -44,6 +53,7 @@ export function InterventionReview({ conversationId }: InterventionReviewProps) 
   const [listError, setListError] = useState<string | null>(null)
   const [resolutionError, setResolutionError] = useState<string | null>(null)
   const [result, setResult] = useState<ResolutionResult | null>(null)
+  const lastLifecycleEventId = useRef<number | null>(null)
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -61,6 +71,27 @@ export function InterventionReview({ conversationId }: InterventionReviewProps) 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    const latestLifecycleEvent = events.reduce<GovernanceEventStreamPayload | null>(
+      (latest, event) =>
+        interventionLifecycleEvents.has(event.event.eventType)
+          && (latest === null || event.eventId > latest.eventId)
+          ? event
+          : latest,
+      null,
+    )
+    if (
+      latestLifecycleEvent === null
+      || (lastLifecycleEventId.current !== null
+        && latestLifecycleEvent.eventId <= lastLifecycleEventId.current)
+    ) {
+      return
+    }
+
+    lastLifecycleEventId.current = latestLifecycleEvent.eventId
+    void refresh()
+  }, [events, refresh])
 
   useEffect(() => {
     setResolutionForm(null)

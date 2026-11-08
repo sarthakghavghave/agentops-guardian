@@ -9,7 +9,11 @@ import {
   pendingInterventions,
   resolutionOutcome,
 } from './interventionReviewState'
-import type { GovernanceInterventionResponse, WorkflowTrajectoryResponse } from '../../types/api'
+import type {
+  GovernanceEventStreamPayload,
+  GovernanceInterventionResponse,
+  WorkflowTrajectoryResponse,
+} from '../../types/api'
 
 vi.mock('../../api/interventions', () => ({
   approveIntervention: vi.fn(),
@@ -63,6 +67,46 @@ const trajectory: WorkflowTrajectoryResponse = {
   currentState: null,
   eventCount: 4,
   events: [],
+}
+
+const interventionCreatedEvent: GovernanceEventStreamPayload = {
+  eventId: 25,
+  conversationId: 'conversation-1',
+  workflowId: 'workflow-1',
+  agentName: 'EmailAgent',
+  workflowType: 'EMAIL_COMMUNICATION',
+  event: {
+    timestamp: '2026-10-16T10:00:00Z',
+    eventType: 'INTERVENTION_CREATED',
+    toolCallId: 'call-1',
+    toolName: 'sendEmail',
+    capability: 'SEND_EMAIL',
+    sequence: null,
+    policyDecision: null,
+    policyId: null,
+    policyReason: null,
+    executionStatus: null,
+    errorType: null,
+    errorMessage: null,
+    nodeBeforeId: null,
+    nodeBeforeState: null,
+    nodeBeforeCapability: null,
+    nodeAfterId: null,
+    nodeAfterState: null,
+    nodeAfterCapability: null,
+    stateBefore: null,
+    stateAfter: null,
+    classificationBefore: null,
+    classificationAfter: null,
+    transformationType: null,
+    riskLevel: 'HIGH',
+    intervention: 'REQUIRE_APPROVAL',
+    riskReason: 'Email is an external action.',
+    interventionId: 'intervention-1',
+    interventionStatus: 'PENDING',
+    resolvedBy: null,
+    resolutionReason: null,
+  },
 }
 
 const mockedList = vi.mocked(listInterventions)
@@ -145,6 +189,25 @@ describe('InterventionReview', () => {
     expect(screen.getByText('High-risk email requires review.')).toBeTruthy()
     expect(screen.queryByText('No pending interventions.')).toBeNull()
     expect(screen.getAllByText('PENDING').length).toBeGreaterThan(0)
+  })
+
+  it('refreshes interventions when an intervention lifecycle event arrives for the conversation', async () => {
+    mockedList.mockResolvedValueOnce([]).mockResolvedValueOnce([pending])
+    const { rerender } = render(
+      <InterventionReview conversationId="conversation-1" events={[]} />,
+    )
+    expect(await screen.findByText('No pending interventions.')).toBeTruthy()
+    expect(mockedList).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <InterventionReview
+        conversationId="conversation-1"
+        events={[interventionCreatedEvent]}
+      />,
+    )
+
+    expect(await screen.findByText('sendEmail')).toBeTruthy()
+    expect(mockedList).toHaveBeenCalledTimes(2)
   })
 
   it('submits required approval fields, prevents duplicate resolution, and displays returned outcome', async () => {
