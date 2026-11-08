@@ -22,8 +22,8 @@ export function LiveWorkflowPanel({
       title={title}
       description={
         hasLiveActivity
-          ? 'Focused on the workflow associated with the latest received governance event. The persisted trajectory is authoritative.'
-          : 'Most recently active workflow from persisted workflow summaries.'
+          ? 'Most recent workflow will appear here.'
+          : 'Most recent active workflow.'
       }
     >
       {!focusedWorkflowId ? (

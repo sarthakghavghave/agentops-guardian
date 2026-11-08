@@ -119,7 +119,6 @@ export function WorkflowTrajectoryRail({
               <p className="text-sm font-semibold text-ink-950">
                 {workflow.agentName} · {workflowTypeLabel(workflow.workflowType)}
               </p>
-              <p className="mt-1 truncate font-mono text-xs text-muted">{workflow.workflowId}</p>
             </div>
             <Link
               className="inline-flex w-fit shrink-0 items-center gap-1 text-xs font-medium text-accent hover:text-accent/80"

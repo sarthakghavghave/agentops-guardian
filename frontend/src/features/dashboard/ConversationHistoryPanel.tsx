@@ -62,7 +62,6 @@ function WorkflowHistoryCard({
           <h3 className="text-sm font-semibold text-ink-950">
             {workflow.agentName} · {workflowTypeLabel(workflow.workflowType)}
           </h3>
-          <p className="mt-1 truncate font-mono text-xs text-muted">{workflowId}</p>
           <p className="mt-1 text-xs text-muted">
             Started {formatTimestamp(workflow.startedAt)}
           </p>
@@ -82,7 +81,7 @@ function WorkflowHistoryCard({
       )}
       {trajectoryQuery.isError && !trajectory && liveEvents.length === 0 && (
         <div className="p-4">
-          <ErrorState message={`The persisted trajectory for workflow ${workflowId} could not be loaded.`} />
+          <ErrorState message="The persisted workflow trajectory could not be loaded." />
         </div>
       )}
       {hasActivity && (
@@ -100,11 +99,6 @@ function WorkflowHistoryCard({
               <p className="mt-1 text-sm font-medium text-ink-900">
                 {governanceSummary?.latestActivity?.label ?? 'No activity recorded'}
               </p>
-              {governanceSummary?.latestActivity && (
-                <time className="mt-0.5 block text-xs text-muted" dateTime={governanceSummary.latestActivity.timestamp}>
-                  {formatTimestamp(governanceSummary.latestActivity.timestamp)}
-                </time>
-              )}
             </div>
             <div>
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted">Latest governance</p>
@@ -196,7 +190,7 @@ export function ConversationHistoryPanel({
   return (
     <Panel
       title="Conversation history"
-      description="Select a persisted conversation to view its workflows and governance event trails in start-time order."
+      description="Workflows per conversation."
     >
       {summariesPending && summaries.length === 0 ? (
         <div className="px-5 py-6">
@@ -223,9 +217,9 @@ export function ConversationHistoryPanel({
               onChange={(event) => setRequestedConversationId(event.target.value)}
               value={selectedConversation?.conversationId ?? ''}
             >
-              {conversations.map((conversation) => (
+              {conversations.map((conversation, index) => (
                 <option key={conversation.conversationId} value={conversation.conversationId}>
-                  {conversation.conversationId} · {conversation.workflows.length} workflow
+                  Conversation {index + 1} · {conversation.workflows.length} workflow
                   {conversation.workflows.length === 1 ? '' : 's'}
                 </option>
               ))}

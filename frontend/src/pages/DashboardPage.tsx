@@ -11,7 +11,7 @@ export function DashboardPage() {
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-ink-950">Governance overview</h2>
           <p className="mt-1 text-sm text-muted">
-            Monitor governed workflows and review activity across your agent operations.
+            Enable guardian to monitor and review your agent operations.
           </p>
         </div>
         <LiveConnectionStatus status={liveState.status} />

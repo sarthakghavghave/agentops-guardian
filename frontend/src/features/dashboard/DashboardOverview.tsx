@@ -101,10 +101,10 @@ export function DashboardOverview({ liveState }: { liveState: LiveGovernanceStat
   return (
     <div className="space-y-6">
       {workflows.isError && (
-        <ErrorState message="Workflow summaries could not be loaded. Live event focus and trajectory data remain available when received." />
+        <ErrorState message="Workflow summaries could not be loaded." />
       )}
       {interventions.isError && (
-        <ErrorState message="Interventions could not be loaded. Workflow data remains available." />
+        <ErrorState message="Interventions could not be loaded." />
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
