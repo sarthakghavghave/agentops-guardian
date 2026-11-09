@@ -10,9 +10,10 @@ type Scenario = {
 const scenarios: Scenario[] = [
   {
     id: 'report-generation',
-    name: 'Report Generation',
+    name: 'Consecutive tasks: Report then Email',
     messages: [
       'Generate an analytical report of customers in North Michael.',
+      'Mail the analytical report to ghavghavess@rknec.edu with a short professional message.',
     ],
   },
   {
@@ -32,7 +33,7 @@ const scenarios: Scenario[] = [
   },
   {
     id: 'task-chaining',
-    name: 'Task Chaining',
+    name: 'Task Chaining: Report + Email',
     messages: [
       'Generate an analytical report of customers in North Michael and email it to ghavghavess@rknec.edu.',
     ],

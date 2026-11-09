@@ -8,19 +8,14 @@ const agents: {
   {
     name: 'CustomerSupportAgent',
     tools: [
-      'getCustomer',
-      'searchCustomersByName',
-      'getCustomerOrders',
-      'getOrder',
-      'getOrderItems',
-      'returnOrder',
-      'getProduct',
-      'getCustomerData',
+      'Customers',
+      'Orders',
+      'Products',
     ],
   },
   {
     name: 'CustomerReportAgent',
-    tools: ['getCustomerData', 'generateReport'],
+    tools: ['CustomerData', 'generateReport'],
   },
   {
     name: 'EmailAgent',
