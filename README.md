@@ -8,6 +8,20 @@ Check out the application: [Governance Dashboard](https://agentguardian.onrender
 
 AI agents can perform multi-step tasks using tools, including reading customer information and sending email. A per-tool permission check does not capture whether an action is appropriate in the context of earlier workflow steps. AgentOps Guardian evaluates tool proposals in their workflow context and records the decisions and outcomes.
 
+## Project Demonstration
+
+The video compares the same PII-related scenario with Guardian disabled and enabled:
+
+1. Guardian OFF: An agent retrieves Michael Fletcher's email address from the shared conversation context and sends it through an email action.
+2. Guardian ON: The same scenario is evaluated by the governance layer, which intercepts and blocks the sensitive email action under the configured policy.
+
+The demonstration uses synthetic data and an intentionally vulnerable scenario to illustrate how governance enforcement can prevent unintended actions.
+
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/8cc5bf26-93cc-47b2-b988-269ac217b326" width="80%" controls></video>
+</div>
+
 ## Architecture
 Check out the [Architecture Page](https://agentguardian.onrender.com/architecture)
 
